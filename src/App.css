@@ -199,11 +199,75 @@ main {
   margin-bottom: 0.9rem;
 }
 
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.9rem;
+}
+
+.settings-head .step-num {
+  margin-bottom: 0;
+}
+
+.add-attr-btn {
+  border: 1px solid var(--border2);
+  background: var(--surface2);
+  color: var(--text);
+  border-radius: 999px;
+  height: 34px;
+  padding: 0 0.7rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: 'Mulish', sans-serif;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.add-attr-btn:hover {
+  border-color: var(--text);
+  background: #f2f0ea;
+}
+
+.add-attr-btn span {
+  font-size: 1rem;
+  line-height: 1;
+}
+
 /* ── Drop zones ── */
 .drop-row {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.sample-btn {
+  border: 1px solid var(--border2);
+  background: var(--surface2);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.78rem;
+  font-family: 'Mulish', sans-serif;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 0.85rem;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.sample-btn:hover {
+  border-color: var(--text);
+  background: #f2f0ea;
+}
+
+.sample-hint {
+  margin-top: 0.75rem;
+  font-size: 0.73rem;
+  color: var(--muted);
 }
 
 .drop-area {
@@ -280,6 +344,50 @@ main {
 }
 
 .field-hint { font-size: 0.73rem; color: var(--hint); }
+
+.attrs-wrap {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.attr-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  padding: 0.9rem;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border);
+  background: #fbfaf7;
+}
+
+.delete-attr-btn {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #f7cfcf;
+  background: #fff5f5;
+  color: #dc2626;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.delete-attr-btn:hover {
+  background: #fee2e2;
+  border-color: #fda4a4;
+}
+
+@media (max-width: 480px) {
+  .attr-row { grid-template-columns: 1fr; }
+}
 
 .preview-pill {
   display: inline-flex;
