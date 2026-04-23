@@ -311,24 +311,39 @@ export default function App() {
     setAuthError("");
 
     const email = authEmail.trim().toLowerCase();
+    const password = authPassword.trim();
+
     if (!email) {
-      setAuthError("Enter an email address to continue.");
+      setAuthError("Enter a username to continue.");
       return;
     }
 
-    if (!authPassword.trim()) {
-      setAuthError("Enter any password to use the local placeholder sign-in.");
+    if (!password) {
+      setAuthError("Enter a password to continue.");
       return;
     }
 
     setAuthBusy(true);
     try {
+      const endpoint = authMode === "signup" ? "/api/auth/signup" : "/api/auth/login";
+      const res = await publicFetch(endpoint, {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      const body = await res.json();
+
+      if (!res.ok) {
+        throw new Error(body.error || "Authentication failed.");
+      }
+
       window.localStorage.setItem("bulkcertify_local_auth", JSON.stringify({ email }));
       setAuthEmail(email);
       setIsAuthenticated(true);
       setScreen("generator");
-      setAccount(null);
+      setAccount(body.account || null);
       setError("");
+    } catch (err) {
+      setAuthError(err.message || "Authentication failed.");
     } finally {
       setAuthBusy(false);
     }

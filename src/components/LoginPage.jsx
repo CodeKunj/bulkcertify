@@ -30,8 +30,8 @@ export default function LoginPage({
           <h1>{authMode === "login" ? "Welcome back" : "Create your account"}</h1>
           <p className="sub gate-sub">
             {authMode === "login"
-              ? "Return to your certificate workspace with the local placeholder login."
-              : "Start with the local placeholder signup and unlock the same generator flow."}
+              ? "Return to your certificate workspace with your username and password."
+              : "Create an account with username and password to start generating certificates."}
           </p>
 
           <div className="gate-points">
@@ -44,8 +44,8 @@ export default function LoginPage({
               <span>Export the finished certificates in the format you need.</span>
             </div>
             <div className="gate-point">
-              <strong>Local auth placeholder</strong>
-              <span>Any email and password will work for now.</span>
+              <strong>Secure local auth</strong>
+              <span>Sign up creates your account, and login verifies your password.</span>
             </div>
           </div>
         </section>
@@ -70,13 +70,13 @@ export default function LoginPage({
 
           <form className="auth-form gate-form" onSubmit={signIn}>
             <div className="field">
-              <label htmlFor="auth-email">Email</label>
+              <label htmlFor="auth-email">Username</label>
               <input
                 id="auth-email"
-                type="email"
+                type="text"
                 value={authEmail}
                 onChange={(e) => setAuthEmail(e.target.value)}
-                placeholder="you@example.com"
+                placeholder="Enter your username"
               />
             </div>
             <div className="field">
@@ -86,7 +86,7 @@ export default function LoginPage({
                 type="password"
                 value={authPassword}
                 onChange={(e) => setAuthPassword(e.target.value)}
-                placeholder="Any password for now"
+                placeholder="Enter your password"
               />
             </div>
             <button type="submit" className="account-btn gate-submit" disabled={authBusy}>

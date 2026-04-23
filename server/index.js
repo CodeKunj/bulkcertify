@@ -2,7 +2,7 @@ import "dotenv/config";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import express from "express";
-import { createHmac, timingSafeEqual } from "crypto";
+import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "crypto";
 import Razorpay from "razorpay";
 import { PrismaClient } from "@prisma/client";
 
@@ -52,6 +52,42 @@ function getSafeEmail(req, fallbackId = "local-user") {
 function getLocalAuthEmail(req) {
   const email = getSafeEmail(req, "").trim().toLowerCase();
   return email || null;
+}
+
+function normalizeAuthIdentifier(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().toLowerCase();
+}
+
+function hashPassword(password) {
+  const salt = randomBytes(16).toString("hex");
+  const hash = scryptSync(password, salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, storedHash) {
+  if (!storedHash || typeof storedHash !== "string") return false;
+  const [salt, hash] = storedHash.split(":");
+  if (!salt || !hash) return false;
+
+  const derived = scryptSync(password, salt, 64);
+  const expectedBuffer = Buffer.from(hash, "hex");
+  if (expectedBuffer.length !== derived.length) return false;
+
+  return timingSafeEqual(expectedBuffer, derived);
+}
+
+function toAccountPayload(user) {
+  const subscribed = isActiveSubscriber(user);
+  return {
+    email: user.email,
+    trialUsageCount: user.trialUsageCount,
+    isSubscribed: subscribed,
+    subscriptionStartDate: user.subscriptionStartDate,
+    subscriptionEndDate: user.subscriptionEndDate,
+    subscriptionId: user.subscriptionId,
+    canGenerate: subscribed || user.trialUsageCount > 0,
+  };
 }
 
 function requireLocalAuth(req, res, next) {
@@ -263,6 +299,60 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/api/auth/signup", async (req, res) => {
+  try {
+    const identifier = normalizeAuthIdentifier(req.body?.email || req.body?.username || "");
+    const password = String(req.body?.password || "").trim();
+
+    if (!identifier) {
+      return res.status(400).json({ error: "Username is required." });
+    }
+
+    if (!password) {
+      return res.status(400).json({ error: "Password is required." });
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email: identifier } });
+    if (existing) {
+      return res.status(409).json({ error: "User already exists. Please log in." });
+    }
+
+    const user = await prisma.user.create({
+      data: {
+        id: generateDbId(),
+        email: identifier,
+        passwordHash: hashPassword(password),
+        trialUsageCount: 3,
+        isSubscribed: false,
+      },
+    });
+
+    return res.status(201).json({ account: toAccountPayload(user) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not create account." });
+  }
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const identifier = normalizeAuthIdentifier(req.body?.email || req.body?.username || "");
+    const password = String(req.body?.password || "");
+
+    if (!identifier || !password) {
+      return res.status(400).json({ error: "Username and password are required." });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email: identifier } });
+    if (!user || !verifyPassword(password, user.passwordHash)) {
+      return res.status(401).json({ error: "Incorrect login password." });
+    }
+
+    return res.json({ account: toAccountPayload(user) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not log in." });
+  }
+});
+
 app.get("/api/guest/status", async (req, res) => {
   try {
     const usage = await getOrCreateGuestUsage(req, res);
@@ -304,17 +394,7 @@ app.post("/api/guest/consume", async (req, res) => {
 app.get("/api/me", requireLocalAuth, async (req, res) => {
   try {
     const user = await getOrCreateUser(req);
-    const subscribed = isActiveSubscriber(user);
-
-    res.json({
-      email: user.email,
-      trialUsageCount: user.trialUsageCount,
-      isSubscribed: subscribed,
-      subscriptionStartDate: user.subscriptionStartDate,
-      subscriptionEndDate: user.subscriptionEndDate,
-      subscriptionId: user.subscriptionId,
-      canGenerate: subscribed || user.trialUsageCount > 0,
-    });
+    res.json(toAccountPayload(user));
   } catch (err) {
     res.status(500).json({ error: err.message || "Failed to load account." });
   }
