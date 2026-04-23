@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import { renderAsync } from "docx-preview";
@@ -6,8 +6,11 @@ import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import DropZone from "./components/DropZone";
 import ProgressCard from "./components/ProgressCard";
+import LoginPage from "./components/LoginPage";
+import UpgradePage from "./components/UpgradePage";
 import "./App.css";
 import sampleDocxUrl from "../Sample_certificate.docx";
+
 
 function replaceInXml(xml, placeholder, value) {
   const safe = value
@@ -114,7 +117,32 @@ function triggerDownload(blobOrUrl, fileName) {
   }
 }
 
+function loadRazorpayCheckout() {
+  if (window.Razorpay) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.onload = () => resolve(true);
+    script.onerror = () => reject(new Error("Could not load Razorpay checkout."));
+    document.body.appendChild(script);
+  });
+}
+
 export default function App() {
+  const apiBase = import.meta.env.VITE_API_URL || "";
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [screen, setScreen] = useState("generator");
+  const [authMode, setAuthMode] = useState("login");
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+
   const [docxFile, setDocxFile] = useState(null);
   const [rows, setRows] = useState([]);
   const [columns, setColumns] = useState([]);
@@ -123,7 +151,192 @@ export default function App() {
   const [extraAttrs, setExtraAttrs] = useState([]);
   const [downloadFormat, setDownloadFormat] = useState("docx");
   const [progress, setProgress] = useState(null);
+  const [account, setAccount] = useState(null);
+  const [accountLoading, setAccountLoading] = useState(false);
+  const [guestTrial, setGuestTrial] = useState(null);
+  const [guestLoading, setGuestLoading] = useState(false);
+  const [billingBusy, setBillingBusy] = useState(false);
   const [error, setError] = useState("");
+
+  const getApiUrl = useCallback(
+    (path) => (apiBase ? `${apiBase}${path}` : path),
+    [apiBase]
+  );
+
+  useEffect(() => {
+    const savedAuth = window.localStorage.getItem("bulkcertify_local_auth");
+    if (savedAuth) {
+      try {
+        const parsed = JSON.parse(savedAuth);
+        if (parsed?.email) {
+          setAuthEmail(parsed.email);
+          setIsAuthenticated(true);
+          setScreen("generator");
+        }
+      } catch {
+        window.localStorage.removeItem("bulkcertify_local_auth");
+      }
+    }
+    setAuthLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (authLoading) return;
+
+    if (isAuthenticated) {
+      if (account?.isSubscribed) {
+        setScreen("generator");
+      } else if (!accountLoading && account && !account.canGenerate) {
+        setScreen("upgrade");
+      }
+      return;
+    }
+
+    if (screen === "upgrade") {
+      return;
+    }
+
+    if (guestTrial && !guestTrial.canGenerate && screen === "generator") {
+      setScreen("upgrade");
+    }
+  }, [account, accountLoading, authLoading, guestTrial, isAuthenticated, screen]);
+
+  const authHeaders = useCallback(() => {
+    if (!isAuthenticated || !authEmail) return {};
+    return { "x-user-email": authEmail };
+  }, [authEmail, isAuthenticated]);
+
+  const authedFetch = useCallback(
+    async (path, options = {}) => {
+      const headers = {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+        ...(options.headers || {}),
+      };
+
+      if (!headers["x-user-email"]) {
+        throw new Error("Please sign in to continue.");
+      }
+
+      return fetch(getApiUrl(path), {
+        ...options,
+        headers,
+      });
+    },
+    [authHeaders, getApiUrl]
+  );
+
+  const publicFetch = useCallback(
+    async (path, options = {}) => {
+      return fetch(getApiUrl(path), {
+        ...options,
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(options.headers || {}),
+        },
+      });
+    },
+    [getApiUrl]
+  );
+
+  const loadAccount = useCallback(async () => {
+    if (!isAuthenticated) {
+      setAccount(null);
+      return;
+    }
+
+    setAccountLoading(true);
+    try {
+      const res = await authedFetch("/api/me");
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error || "Could not load your account.");
+      }
+      setAccount(body);
+    } catch (err) {
+      setError(err.message || "Could not load your account.");
+    } finally {
+      setAccountLoading(false);
+    }
+  }, [authedFetch, isAuthenticated]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    loadAccount();
+  }, [authLoading, loadAccount]);
+
+  const loadGuestTrial = useCallback(async () => {
+    if (isAuthenticated) {
+      setGuestTrial(null);
+      return;
+    }
+
+    setGuestLoading(true);
+    try {
+      const res = await publicFetch("/api/guest/status");
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error || "Could not load guest trial status.");
+      }
+      setGuestTrial(body);
+    } catch (err) {
+      setError(err.message || "Could not load guest trial status.");
+    } finally {
+      setGuestLoading(false);
+    }
+  }, [isAuthenticated, publicFetch]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    loadGuestTrial();
+  }, [authLoading, loadGuestTrial]);
+
+  const signIn = async (event) => {
+    event.preventDefault();
+    setAuthError("");
+
+    const email = authEmail.trim().toLowerCase();
+    if (!email) {
+      setAuthError("Enter an email address to continue.");
+      return;
+    }
+
+    if (!authPassword.trim()) {
+      setAuthError("Enter any password to use the local placeholder sign-in.");
+      return;
+    }
+
+    setAuthBusy(true);
+    try {
+      window.localStorage.setItem("bulkcertify_local_auth", JSON.stringify({ email }));
+      setAuthEmail(email);
+      setIsAuthenticated(true);
+      setScreen("generator");
+      setAccount(null);
+      setError("");
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const continueAsGuest = () => {
+    setAuthError("");
+    setError("");
+    setScreen("generator");
+  };
+
+  const signOut = () => {
+    window.localStorage.removeItem("bulkcertify_local_auth");
+    setAuthEmail("");
+    setAuthPassword("");
+    setIsAuthenticated(false);
+    setScreen("auth");
+    setAuthMode("login");
+    setAccount(null);
+    setGuestTrial(null);
+    setError("");
+  };
 
   const handleExcel = useCallback((file) => {
     const reader = new FileReader();
@@ -156,7 +369,13 @@ export default function App() {
     .map((row) => ({ row, name: normalizeFieldValue(row[selectedCol]) }))
     .filter((entry) => entry.name);
   const names = records.map((entry) => entry.name);
-  const canGenerate = docxFile && records.length > 0;
+  const canGenerate =
+    !!docxFile &&
+    records.length > 0 &&
+    (isAuthenticated ? !!account?.canGenerate : !!guestTrial?.canGenerate) &&
+    !accountLoading &&
+    !guestLoading &&
+    !billingBusy;
 
   const addAttributeRow = () => {
     setExtraAttrs((prev) => [
@@ -179,8 +398,114 @@ export default function App() {
     triggerDownload(sampleDocxUrl, "Sample_certificate.docx");
   };
 
+  const startRazorpayCheckout = async () => {
+    if (!isAuthenticated) {
+      setError("Please sign in before purchasing a subscription.");
+      return;
+    }
+
+    setError("");
+    setBillingBusy(true);
+    try {
+      const res = await authedFetch("/api/razorpay/create-subscription", {
+        method: "POST",
+      });
+      const body = await res.json();
+
+      if (!res.ok) {
+        throw new Error(body.error || "Unable to start Razorpay checkout.");
+      }
+
+      await loadRazorpayCheckout();
+
+      const razorpay = new window.Razorpay({
+        key: body.keyId,
+        subscription_id: body.subscriptionId,
+        name: "Cert/Gen Pro",
+        description: "Monthly certificate generator subscription",
+        prefill: {
+          email: body.email || authEmail,
+        },
+        theme: {
+          color: "#1a1a1a",
+        },
+        handler: async (response) => {
+          try {
+            const verifyRes = await authedFetch("/api/razorpay/verify-payment", {
+              method: "POST",
+              body: JSON.stringify(response),
+            });
+            const verifyBody = await verifyRes.json();
+
+            if (!verifyRes.ok) {
+              throw new Error(verifyBody.error || "Unable to verify Razorpay payment.");
+            }
+
+            if (verifyBody.account) {
+              setAccount(verifyBody.account);
+              setScreen("generator");
+            }
+          } catch (err) {
+            setError(err.message || "Unable to verify Razorpay payment.");
+          } finally {
+            setBillingBusy(false);
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setBillingBusy(false);
+          },
+        },
+      });
+
+      razorpay.on("payment.failed", (response) => {
+        setError(response?.error?.description || "Razorpay payment failed.");
+        setBillingBusy(false);
+      });
+
+      razorpay.open();
+    } catch (err) {
+      setError(err.message || "Unable to start Razorpay checkout.");
+      setBillingBusy(false);
+      }
+  };
+
   const generate = async () => {
     setError("");
+    let shouldShowUpgrade = false;
+
+    if (!isAuthenticated) {
+      try {
+        const consumeRes = await publicFetch("/api/guest/consume", { method: "POST" });
+        const consumeBody = await consumeRes.json();
+        if (!consumeRes.ok || !consumeBody.allowed) {
+          setGuestTrial({
+            remainingUses: 0,
+            canGenerate: false,
+          });
+          setScreen("upgrade");
+          setError(
+            consumeBody.message ||
+              "Your 3 free guest uses are finished. Please sign in to continue."
+          );
+          return;
+        }
+
+        setGuestTrial({
+          remainingUses: consumeBody.remainingUses,
+          canGenerate: !!consumeBody.canGenerate,
+        });
+        shouldShowUpgrade = !consumeBody.canGenerate;
+      } catch (err) {
+        setError(err.message || "Could not validate guest usage.");
+        return;
+      }
+    } else if (!account?.canGenerate) {
+      setScreen("upgrade");
+      setError("Your free trial is over. Upgrade to Pro to keep generating certificates.");
+      return;
+    }
+
     const marker = placeholder.trim();
     if (!marker) {
       setError("Placeholder cannot be empty.");
@@ -204,6 +529,41 @@ export default function App() {
         column: attr.column.trim(),
       }))
       .filter((attr) => attr.placeholder && attr.column);
+
+    if (isAuthenticated) {
+      try {
+        const consumeRes = await authedFetch("/api/usage/consume", { method: "POST" });
+        const consumeBody = await consumeRes.json();
+
+        if (!consumeRes.ok || !consumeBody.allowed) {
+          setProgress(null);
+          setAccount((prev) => ({
+            ...(prev || {}),
+            canGenerate: false,
+            trialUsageCount: 0,
+            isSubscribed: prev?.isSubscribed || false,
+          }));
+          setScreen("upgrade");
+          setError(
+            consumeBody.message ||
+              "Your free trial is over. Upgrade to Pro to continue generating certificates."
+          );
+          return;
+        }
+
+        shouldShowUpgrade = !consumeBody.isSubscribed && (consumeBody.trialUsageCount || 0) === 0;
+
+        setAccount((prev) => ({
+          ...(prev || {}),
+          canGenerate: consumeBody.isSubscribed || consumeBody.trialUsageCount > 0,
+          trialUsageCount: consumeBody.trialUsageCount,
+          isSubscribed: !!consumeBody.isSubscribed,
+        }));
+      } catch (err) {
+        setError(err.message || "Could not validate trial usage.");
+        return;
+      }
+    }
 
     setProgress({ pct: 0, msg: "Reading template…", done: false });
 
@@ -274,7 +634,49 @@ export default function App() {
     });
 
     triggerDownload(zipBlob, `certificates_${downloadFormat}.zip`);
+
+    if (shouldShowUpgrade) {
+      setScreen("upgrade");
+    }
   };
+
+  const guestUsesLeft = Math.max(guestTrial?.remainingUses || 0, 0);
+  const accountUsesLeft = Math.max(account?.trialUsageCount || 0, 0);
+
+  if (screen === "auth") {
+    return (
+      <LoginPage
+        authMode={authMode}
+        setAuthMode={setAuthMode}
+        authEmail={authEmail}
+        setAuthEmail={setAuthEmail}
+        authPassword={authPassword}
+        setAuthPassword={setAuthPassword}
+        authBusy={authBusy}
+        authError={authError}
+        signIn={signIn}
+        continueAsGuest={continueAsGuest}
+        guestLoading={guestLoading}
+        guestUsesLeft={guestUsesLeft}
+      />
+    );
+  }
+
+  if (screen === "upgrade") {
+    return (
+      <UpgradePage
+        isAuthenticated={isAuthenticated}
+        account={account}
+        billingBusy={billingBusy}
+        accountLoading={accountLoading}
+        accountUsesLeft={accountUsesLeft}
+        startRazorpayCheckout={startRazorpayCheckout}
+        error={error}
+        setAuthMode={setAuthMode}
+        setScreen={setScreen}
+      />
+    );
+  }
 
   return (
     <div className="app">
@@ -296,6 +698,84 @@ export default function App() {
       </header>
 
       <main>
+        <section className="account-card">
+          {isAuthenticated ? (
+            <>
+              <div className="account-top">
+                <div className="account-meta">
+                  <h3>{accountLoading ? "Loading account..." : "Billing Dashboard"}</h3>
+                  <p>{account?.email || authEmail || "Signed in"}</p>
+                </div>
+                <button type="button" className="account-btn" onClick={signOut}>
+                  Sign Out
+                </button>
+              </div>
+
+              <div className="account-stats">
+                <div className="stat-chip">
+                  <span>Status</span>
+                  <strong>{account?.isSubscribed ? "Pro Active" : "Free Trial"}</strong>
+                </div>
+                <div className="stat-chip">
+                  <span>Remaining Free Uses</span>
+                  <strong>{accountLoading ? "..." : Math.max(account?.trialUsageCount || 0, 0)}</strong>
+                </div>
+              </div>
+
+              <div className="account-actions">
+                {!account?.isSubscribed ? (
+                  <button
+                    type="button"
+                    className="account-btn"
+                    onClick={startRazorpayCheckout}
+                    disabled={billingBusy || accountLoading}
+                  >
+                    Upgrade with Razorpay
+                  </button>
+                ) : (
+                  <button type="button" className="account-btn" disabled>
+                    Subscription Active
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="account-line">
+                <div>
+                  <h3>Guest Mode</h3>
+                  <p>
+                    {guestLoading
+                      ? "Checking free uses..."
+                      : `${guestUsesLeft} guest use${guestUsesLeft === 1 ? "" : "s"} left before upgrade.`}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="account-btn"
+                  onClick={() => {
+                    setAuthMode("login");
+                    setScreen("auth");
+                  }}
+                >
+                  Sign In / Sign Up
+                </button>
+              </div>
+
+              <div className="account-stats">
+                <div className="stat-chip">
+                  <span>Status</span>
+                  <strong>Guest Trial</strong>
+                </div>
+                <div className="stat-chip">
+                  <span>Next step</span>
+                  <strong>Upgrade after 3 uses</strong>
+                </div>
+              </div>
+            </>
+          )}
+        </section>
+
         {/* Step 1 */}
         <div className="step-card active">
           <div className="step-num">01 — Upload Files</div>
@@ -456,7 +936,15 @@ export default function App() {
             <polyline points="7 10 12 15 17 10"/>
             <line x1="12" y1="15" x2="12" y2="3"/>
           </svg>
-          Generate &amp; Download {downloadFormat.toUpperCase()} ZIP
+          {!isAuthenticated
+            ? guestLoading
+              ? "Checking Free Uses..."
+              : guestTrial?.canGenerate
+                ? `Generate (Free Uses Left: ${Math.max(guestTrial?.remainingUses || 0, 0)})`
+                : "Sign In to Continue"
+            : accountLoading
+              ? "Checking Account..."
+              : `Generate & Download ${downloadFormat.toUpperCase()} ZIP`}
         </button>
 
         {progress && <ProgressCard progress={progress} />}

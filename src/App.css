@@ -166,6 +166,165 @@ main {
   gap: 1.2rem;
 }
 
+.gate-shell {
+  flex: 1;
+  width: min(1100px, calc(100% - 3rem));
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+  gap: 1.4rem;
+  align-items: start;
+}
+
+.gate-copy {
+  padding: 1rem 0;
+}
+
+.gate-copy h1 {
+  margin-top: 0.8rem;
+  max-width: 10ch;
+}
+
+.gate-sub {
+  max-width: 52ch;
+}
+
+.gate-points {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 1.5rem;
+}
+
+.gate-point,
+.gate-card {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 20px 60px rgba(26, 26, 26, 0.06);
+}
+
+.gate-point {
+  padding: 1rem 1.05rem;
+}
+
+.gate-point strong {
+  display: block;
+  font-family: 'Syne', sans-serif;
+  font-size: 0.95rem;
+  margin-bottom: 0.25rem;
+}
+
+.gate-point span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.gate-card {
+  padding: 1.2rem;
+}
+
+.gate-tabs {
+  display: flex;
+  gap: 0.45rem;
+  padding: 0.35rem;
+  background: #f4f0e7;
+  border-radius: 999px;
+}
+
+.gate-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.72rem 1rem;
+  font-family: 'Syne', sans-serif;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
+}
+
+.gate-tab.active {
+  background: var(--text);
+  color: var(--bg);
+}
+
+.gate-tab:hover:not(.active) {
+  color: var(--text);
+}
+
+.gate-form {
+  margin-top: 1rem;
+}
+
+.gate-submit {
+  width: 100%;
+  margin-top: 0.35rem;
+}
+
+.ghost-link {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+}
+
+.gate-actions {
+  margin-top: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.gate-muted {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.upgrade-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.upgrade-price {
+  margin-top: 0.2rem;
+}
+
+.upgrade-list {
+  margin-top: 0;
+}
+
+.upgrade-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.upgrade-note-strong {
+  background: #eef7ea;
+  border-color: #c7e3b8;
+  color: #1f4d0d;
+}
+
+@media (max-width: 920px) {
+  .gate-shell {
+    grid-template-columns: 1fr;
+    width: min(760px, calc(100% - 2rem));
+    padding-inline: 1rem;
+  }
+}
+
 /* ── Step cards ── */
 .step-card {
   background: var(--surface);
@@ -404,6 +563,155 @@ main {
 
 .preview-names { color: #555; font-weight: 300; }
 
+/* ── Account / Billing ── */
+.account-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.account-line,
+.account-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.account-meta h3,
+.account-line h3 {
+  font-size: 0.95rem;
+  font-family: 'Syne', sans-serif;
+  margin-bottom: 0.25rem;
+}
+
+.account-meta p,
+.account-line p {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.account-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+}
+
+.stat-chip {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: #fbfaf7;
+  padding: 0.7rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.stat-chip span {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--hint);
+}
+
+.stat-chip strong {
+  font-size: 0.9rem;
+}
+
+.account-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.account-btn {
+  border: 1px solid var(--text);
+  background: var(--text);
+  color: var(--bg);
+  border-radius: 999px;
+  padding: 0.55rem 1rem;
+  font-size: 0.8rem;
+  font-family: 'Mulish', sans-serif;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.1s;
+}
+
+.account-btn:hover:not(:disabled) {
+  opacity: 0.92;
+}
+
+.account-btn:active:not(:disabled) {
+  transform: scale(0.99);
+}
+
+.account-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.upgrade-note {
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  border-radius: var(--radius-xs);
+  padding: 0.8rem 1rem;
+  font-size: 0.82rem;
+  color: #9a3412;
+}
+
+.pricing-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.2rem;
+}
+
+.pricing-head h3 {
+  font-family: 'Syne', sans-serif;
+  font-size: 1.02rem;
+}
+
+.pricing-head p {
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.pricing-price {
+  margin-top: 0.8rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+}
+
+.pricing-price strong {
+  font-size: 1.75rem;
+  font-family: 'Syne', sans-serif;
+}
+
+.pricing-price span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.pricing-list {
+  margin-top: 0.75rem;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.3rem;
+  color: #3f3f3f;
+  font-size: 0.82rem;
+}
+
+.pricing-actions {
+  margin-top: 0.9rem;
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* ── Generate button ── */
 .btn-gen {
   width: 100%;
@@ -472,6 +780,41 @@ main {
   margin-top: 0.7rem;
   font-size: 0.8rem;
   color: var(--accent-green);
+}
+
+@media (max-width: 480px) {
+  .account-line,
+  .account-top {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .account-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .account-actions {
+    justify-content: flex-start;
+  }
+
+  .pricing-actions {
+    justify-content: flex-start;
+  }
+
+  .gate-shell {
+    width: min(100%, calc(100% - 1rem));
+    padding: 1rem 0.5rem 3rem;
+  }
+
+  .gate-tabs {
+    flex-direction: column;
+    border-radius: var(--radius);
+  }
+
+  .gate-actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 /* ── Footer ── */

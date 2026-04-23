@@ -1,0 +1,29 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String   @id @default(cuid())
+  email               String   @unique
+  trialUsageCount     Int      @default(3)
+  isSubscribed        Boolean  @default(false)
+  subscriptionId      String?
+  subscriptionEndDate DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([subscriptionId])
+}
+
+model GuestUsage {
+  id            String   @id @default(cuid())
+  cookieId      String   @unique
+  remainingUses Int      @default(3)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}

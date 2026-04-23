@@ -5,4 +5,12 @@ export default defineConfig({
   plugins: [react()],
   base: "./", // add this
   assetsInclude: ["**/*.docx"],
+  server: {
+    proxy: {
+      "/api": {
+        target: "http://localhost:8787",
+        changeOrigin: true,
+      },
+    },
+  },
 });
