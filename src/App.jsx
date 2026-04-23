@@ -141,6 +141,7 @@ export default function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [screen, setScreen] = useState("generator");
+  const [upgradeReturnScreen, setUpgradeReturnScreen] = useState("generator");
   const [policyReturnScreen, setPolicyReturnScreen] = useState("generator");
   const [authMode, setAuthMode] = useState("login");
   const [authLoading, setAuthLoading] = useState(true);
@@ -210,6 +211,7 @@ export default function App() {
       if (account?.isAdmin || account?.isSubscribed) {
         setScreen("generator");
       } else if (!accountLoading && account && !account.canGenerate) {
+        setUpgradeReturnScreen(screen);
         setScreen("upgrade");
       }
       return;
@@ -220,6 +222,7 @@ export default function App() {
     }
 
     if (guestTrial && !guestTrial.canGenerate && screen === "generator") {
+      setUpgradeReturnScreen(screen);
       setScreen("upgrade");
     }
   }, [account, accountLoading, authLoading, guestTrial, isAuthenticated, screen]);
@@ -371,6 +374,10 @@ export default function App() {
 
   const closePolicyPage = () => {
     setScreen(policyReturnScreen || "generator");
+  };
+
+  const closeUpgradePage = () => {
+    setScreen(upgradeReturnScreen || "generator");
   };
 
   const openProfilePage = async () => {
@@ -555,6 +562,63 @@ export default function App() {
     }
   };
 
+  const editClientUsername = async (client) => {
+    const nextUsernameRaw = window.prompt("Enter new username", client.email || "");
+    if (nextUsernameRaw === null) return;
+
+    const nextUsername = String(nextUsernameRaw || "").trim().toLowerCase();
+    if (!nextUsername) {
+      setAdminError("Username cannot be empty.");
+      return;
+    }
+
+    setAdminClientBusyId(client.id);
+    setAdminError("");
+    try {
+      const res = await authedFetch(`/api/admin/clients/${client.id}/username`, {
+        method: "PATCH",
+        body: JSON.stringify({ username: nextUsername }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Could not update username.");
+
+      setAdminClients((prev) => prev.map((entry) => (entry.id === client.id ? body.client : entry)));
+      await loadAdminData(adminSearch);
+    } catch (err) {
+      setAdminError(err.message || "Could not update username.");
+    } finally {
+      setAdminClientBusyId(null);
+    }
+  };
+
+  const editClientPassword = async (client) => {
+    const nextPassword = window.prompt(`Enter new password for ${client.email}`);
+    if (nextPassword === null) return;
+
+    const password = String(nextPassword || "").trim();
+    if (!password) {
+      setAdminError("Password cannot be empty.");
+      return;
+    }
+
+    setAdminClientBusyId(client.id);
+    setAdminError("");
+    try {
+      const res = await authedFetch(`/api/admin/clients/${client.id}/password`, {
+        method: "PATCH",
+        body: JSON.stringify({ password }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Could not update password.");
+
+      await loadAdminData(adminSearch);
+    } catch (err) {
+      setAdminError(err.message || "Could not update password.");
+    } finally {
+      setAdminClientBusyId(null);
+    }
+  };
+
   const handleExcel = useCallback((file) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -700,6 +764,7 @@ export default function App() {
             remainingUses: 0,
             canGenerate: false,
           });
+          setUpgradeReturnScreen("generator");
           setScreen("upgrade");
           setError(
             consumeBody.message ||
@@ -718,6 +783,7 @@ export default function App() {
         return;
       }
     } else if (!account?.canGenerate) {
+      setUpgradeReturnScreen("generator");
       setScreen("upgrade");
       setError("Your free trial is over. Upgrade to Pro to keep generating certificates.");
       return;
@@ -760,6 +826,7 @@ export default function App() {
             trialUsageCount: 0,
             isSubscribed: prev?.isSubscribed || false,
           }));
+          setUpgradeReturnScreen("generator");
           setScreen("upgrade");
           setError(
             consumeBody.message ||
@@ -854,6 +921,7 @@ export default function App() {
     triggerDownload(zipBlob, `certificates_${downloadFormat}.zip`);
 
     if (shouldShowUpgrade) {
+      setUpgradeReturnScreen("generator");
       setScreen("upgrade");
     }
   };
@@ -890,6 +958,7 @@ export default function App() {
         accountLoading={accountLoading}
         accountUsesLeft={accountUsesLeft}
         startRazorpayCheckout={startRazorpayCheckout}
+        onBack={closeUpgradePage}
         error={error}
         setAuthMode={setAuthMode}
         setScreen={setScreen}
@@ -929,6 +998,8 @@ export default function App() {
         onResetTrial={resetClientTrial}
         onToggleSubscription={toggleClientSubscription}
         onDeleteClient={deleteClient}
+        onEditUsername={editClientUsername}
+        onEditPassword={editClientPassword}
       />
     );
   }
@@ -1000,7 +1071,10 @@ export default function App() {
                   <button
                     type="button"
                     className="account-btn"
-                    onClick={startRazorpayCheckout}
+                    onClick={() => {
+                      setUpgradeReturnScreen("generator");
+                      setScreen("upgrade");
+                    }}
                     disabled={billingBusy || accountLoading}
                   >
                     Upgrade with Razorpay

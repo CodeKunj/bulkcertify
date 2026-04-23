@@ -22,6 +22,8 @@ export default function AdminPage({
   onResetTrial,
   onToggleSubscription,
   onDeleteClient,
+  onEditUsername,
+  onEditPassword,
 }) {
   const sortedClients = useMemo(() => {
     return [...clients].sort((a, b) => {
@@ -138,6 +140,22 @@ export default function AdminPage({
                             onClick={() => onToggleSubscription(client)}
                           >
                             {client.isSubscribed ? "Deactivate Plan" : "Activate Plan"}
+                          </button>
+                          <button
+                            type="button"
+                            className="admin-action-btn"
+                            disabled={clientBusyId === client.id}
+                            onClick={() => onEditUsername(client)}
+                          >
+                            Edit Username
+                          </button>
+                          <button
+                            type="button"
+                            className="admin-action-btn"
+                            disabled={clientBusyId === client.id}
+                            onClick={() => onEditPassword(client)}
+                          >
+                            Edit Password
                           </button>
                           {!client.isAdmin && (
                             <button

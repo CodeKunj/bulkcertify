@@ -916,6 +916,114 @@ app.post("/api/admin/clients/:id/reset-trial", requireLocalAuth, requireAdmin, a
   }
 });
 
+app.patch("/api/admin/clients/:id/username", requireLocalAuth, requireAdmin, async (req, res) => {
+  try {
+    const userId = String(req.params.id || "");
+    const username = normalizeAuthIdentifier(req.body?.username || req.body?.email || "");
+
+    if (!userId) {
+      return res.status(400).json({ error: "Client id is required." });
+    }
+
+    if (!username) {
+      return res.status(400).json({ error: "Username is required." });
+    }
+
+    const target = await prisma.user.findUnique({ where: { id: userId } });
+    if (!target) {
+      return res.status(404).json({ error: "Client not found." });
+    }
+
+    if (target.email === adminEmail && username !== adminEmail) {
+      return res.status(400).json({
+        error: "Admin username must match ADMIN_EMAIL. Update ADMIN_EMAIL first if you want to change it.",
+      });
+    }
+
+    const duplicate = await prisma.user.findUnique({ where: { email: username } });
+    if (duplicate && duplicate.id !== userId) {
+      return res.status(409).json({ error: "Username already exists." });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { email: username },
+      select: {
+        id: true,
+        email: true,
+        isAdmin: true,
+        trialUsageCount: true,
+        isSubscribed: true,
+        subscriptionStartDate: true,
+        subscriptionEndDate: true,
+        createdAt: true,
+      },
+    });
+
+    await logActivity(req, {
+      action: "ADMIN_CLIENT_USERNAME_UPDATED",
+      email: req.localAuthEmail,
+      targetType: "USER",
+      targetId: userId,
+      details: {
+        oldUsername: target.email,
+        newUsername: username,
+      },
+    });
+
+    return res.json({ client: updated });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not update username." });
+  }
+});
+
+app.patch("/api/admin/clients/:id/password", requireLocalAuth, requireAdmin, async (req, res) => {
+  try {
+    const userId = String(req.params.id || "");
+    const nextPassword = String(req.body?.password || "").trim();
+
+    if (!userId) {
+      return res.status(400).json({ error: "Client id is required." });
+    }
+
+    if (!nextPassword) {
+      return res.status(400).json({ error: "Password is required." });
+    }
+
+    const target = await prisma.user.findUnique({ where: { id: userId } });
+    if (!target) {
+      return res.status(404).json({ error: "Client not found." });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: hashPassword(nextPassword) },
+      select: {
+        id: true,
+        email: true,
+        isAdmin: true,
+        trialUsageCount: true,
+        isSubscribed: true,
+        subscriptionStartDate: true,
+        subscriptionEndDate: true,
+        createdAt: true,
+      },
+    });
+
+    await logActivity(req, {
+      action: "ADMIN_CLIENT_PASSWORD_UPDATED",
+      email: req.localAuthEmail,
+      targetType: "USER",
+      targetId: userId,
+      details: { updatedFor: target.email },
+    });
+
+    return res.json({ client: updated });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not update password." });
+  }
+});
+
 app.delete("/api/admin/clients/:id", requireLocalAuth, requireAdmin, async (req, res) => {
   try {
     const userId = String(req.params.id || "");

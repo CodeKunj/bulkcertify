@@ -5,6 +5,7 @@ export default function UpgradePage({
   accountLoading,
   accountUsesLeft,
   startRazorpayCheckout,
+  onBack,
   error,
   setAuthMode,
   setScreen,
@@ -46,6 +47,10 @@ export default function UpgradePage({
         </section>
 
         <section className="gate-card upgrade-card">
+          <button type="button" className="ghost-link" onClick={onBack}>
+            Back
+          </button>
+
           <div className="pricing-head">
             <h3>Pro Plan</h3>
             <p>Unlimited certificate generations with all export formats.</p>
