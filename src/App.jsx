@@ -45,6 +45,13 @@ function normalizeDocxTextSpacing(xml) {
   });
 }
 
+function normalizeDocxParagraphAlignment(xml) {
+  return xml.replace(
+    /<w:jc\b[^>]*w:val="(?:both|justify|distribute)"[^>]*\/?>/g,
+    '<w:jc w:val="left"/>'
+  );
+}
+
 function triggerDownload(blobOrUrl, fileName) {
   const a = document.createElement("a");
   if (typeof blobOrUrl === "string") {
@@ -182,6 +189,7 @@ export default function App() {
           nextXml = attrResult.xml;
         }
 
+        nextXml = normalizeDocxParagraphAlignment(nextXml);
         nextXml = normalizeDocxTextSpacing(nextXml);
 
         docZip.file(xmlName, nextXml);
