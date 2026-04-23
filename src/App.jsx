@@ -29,6 +29,22 @@ function replaceInXml(xml, placeholder, value) {
   return { xml, replaced };
 }
 
+function normalizeFieldValue(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeDocxTextSpacing(xml) {
+  return xml.replace(/<w:t([^>]*)>([\s\S]*?)<\/w:t>/g, (_, attrs, text) => {
+    const normalized = text
+      .replace(/\u00A0/g, " ")
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/\s+([,.;:!?])/g, "$1")
+      .replace(/\(\s+/g, "(")
+      .replace(/\s+\)/g, ")");
+    return `<w:t${attrs}>${normalized}</w:t>`;
+  });
+}
+
 function triggerDownload(blobOrUrl, fileName) {
   const a = document.createElement("a");
   if (typeof blobOrUrl === "string") {
@@ -45,102 +61,8 @@ function triggerDownload(blobOrUrl, fileName) {
   }
 }
 
-function ensureImageContentType(contentTypesXml, ext) {
-  const hasType = new RegExp(`Extension="${ext}"`, "i").test(contentTypesXml);
-  if (hasType) return contentTypesXml;
-
-  const contentType = ext === "png" ? "image/png" : "image/jpeg";
-  const node = `<Default Extension="${ext}" ContentType="${contentType}"/>`;
-  return contentTypesXml.replace("</Types>", `${node}</Types>`);
-}
-
-function getLogoDrawingXml(relId) {
-  const cx = 120 * 9525;
-  const cy = 120 * 9525;
-  return `
-<w:p>
-  <w:r>
-    <w:drawing>
-      <wp:inline distT="0" distB="0" distL="0" distR="0" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-        <wp:extent cx="${cx}" cy="${cy}"/>
-        <wp:effectExtent l="0" t="0" r="0" b="0"/>
-        <wp:docPr id="1" name="Logo"/>
-        <wp:cNvGraphicFramePr>
-          <a:graphicFrameLocks noChangeAspect="1"/>
-        </wp:cNvGraphicFramePr>
-        <a:graphic>
-          <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
-            <pic:pic>
-              <pic:nvPicPr>
-                <pic:cNvPr id="0" name="logo"/>
-                <pic:cNvPicPr/>
-              </pic:nvPicPr>
-              <pic:blipFill>
-                <a:blip r:embed="${relId}"/>
-                <a:stretch>
-                  <a:fillRect/>
-                </a:stretch>
-              </pic:blipFill>
-              <pic:spPr>
-                <a:xfrm>
-                  <a:off x="0" y="0"/>
-                  <a:ext cx="${cx}" cy="${cy}"/>
-                </a:xfrm>
-                <a:prstGeom prst="rect">
-                  <a:avLst/>
-                </a:prstGeom>
-              </pic:spPr>
-            </pic:pic>
-          </a:graphicData>
-        </a:graphic>
-      </wp:inline>
-    </w:drawing>
-  </w:r>
-</w:p>`;
-}
-
-async function injectLogoIntoDocx(docZip, logoFile) {
-  const docPath = "word/document.xml";
-  const relsPath = "word/_rels/document.xml.rels";
-  const contentTypesPath = "[Content_Types].xml";
-
-  if (!docZip.files[docPath] || !docZip.files[relsPath] || !docZip.files[contentTypesPath]) {
-    return false;
-  }
-
-  const [docXml, relsXml, contentTypesXml] = await Promise.all([
-    docZip.files[docPath].async("string"),
-    docZip.files[relsPath].async("string"),
-    docZip.files[contentTypesPath].async("string"),
-  ]);
-
-  const ext = logoFile.type === "image/png" ? "png" : "jpg";
-  const mediaName = `logo_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-  const imagePath = `word/media/${mediaName}`;
-  const logoBytes = await logoFile.arrayBuffer();
-  docZip.file(imagePath, logoBytes);
-
-  const idMatches = [...relsXml.matchAll(/Id="rId(\d+)"/g)].map((m) => Number(m[1]));
-  const nextRid = `rId${(idMatches.length ? Math.max(...idMatches) : 0) + 1}`;
-
-  const relNode = `<Relationship Id="${nextRid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${mediaName}"/>`;
-  const nextRelsXml = relsXml.replace("</Relationships>", `${relNode}</Relationships>`);
-  const nextContentTypes = ensureImageContentType(contentTypesXml, ext);
-
-  const bodyIndex = docXml.indexOf("<w:body>");
-  if (bodyIndex === -1) return false;
-  const insertAt = bodyIndex + "<w:body>".length;
-  const nextDocXml = `${docXml.slice(0, insertAt)}${getLogoDrawingXml(nextRid)}${docXml.slice(insertAt)}`;
-
-  docZip.file(docPath, nextDocXml);
-  docZip.file(relsPath, nextRelsXml);
-  docZip.file(contentTypesPath, nextContentTypes);
-  return true;
-}
-
 export default function App() {
   const [docxFile, setDocxFile] = useState(null);
-  const [logoFile, setLogoFile] = useState(null);
   const [rows, setRows] = useState([]);
   const [columns, setColumns] = useState([]);
   const [selectedCol, setSelectedCol] = useState("");
@@ -149,16 +71,20 @@ export default function App() {
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState("");
 
-  const allowedLogoMimeTypes = ["image/png", "image/jpeg"];
-  const logoTypeLabel = "PNG, JPG, or JPEG";
-
   const handleExcel = useCallback((file) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const wb = XLSX.read(new Uint8Array(e.target.result), { type: "array" });
+        const wb = XLSX.read(new Uint8Array(e.target.result), {
+          type: "array",
+          cellDates: true,
+        });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(ws, { defval: "" });
+        const data = XLSX.utils.sheet_to_json(ws, {
+          defval: "",
+          raw: false,
+          dateNF: "yyyy-mm-dd",
+        });
         if (!data.length) { setError("Excel file is empty."); return; }
         const cols = Object.keys(data[0]);
         setRows(data);
@@ -172,23 +98,11 @@ export default function App() {
     reader.readAsArrayBuffer(file);
   }, []);
 
-  const names = rows.map((r) => String(r[selectedCol] || "").trim()).filter(Boolean);
-  const canGenerate = docxFile && names.length > 0;
-
-  const handleLogo = useCallback((file) => {
-    const lowerName = file.name.toLowerCase();
-    const hasAllowedExt = /\.(png|jpe?g)$/.test(lowerName);
-    const hasAllowedMime = allowedLogoMimeTypes.includes(file.type);
-
-    if (!hasAllowedExt && !hasAllowedMime) {
-      setLogoFile(null);
-      setError(`Logo must be ${logoTypeLabel} format.`);
-      return;
-    }
-
-    setLogoFile(file);
-    setError("");
-  }, []);
+  const records = rows
+    .map((row) => ({ row, name: normalizeFieldValue(row[selectedCol]) }))
+    .filter((entry) => entry.name);
+  const names = records.map((entry) => entry.name);
+  const canGenerate = docxFile && records.length > 0;
 
   const addAttributeRow = () => {
     setExtraAttrs((prev) => [
@@ -219,41 +133,61 @@ export default function App() {
       return;
     }
 
+    const hasIncompleteAttr = extraAttrs.some((attr) => {
+      const ph = attr.placeholder.trim();
+      const col = attr.column.trim();
+      return (ph && !col) || (!ph && col);
+    });
+
+    if (hasIncompleteAttr) {
+      setError("Each added attribute must have both placeholder and Excel column selected.");
+      return;
+    }
+
+    const activeAttrs = extraAttrs
+      .map((attr) => ({
+        placeholder: attr.placeholder.trim(),
+        column: attr.column.trim(),
+      }))
+      .filter((attr) => attr.placeholder && attr.column);
+
     setProgress({ pct: 0, msg: "Reading template…", done: false });
 
     const templateBytes = await docxFile.arrayBuffer();
     const outZip = new JSZip();
 
-    for (let i = 0; i < names.length; i++) {
-      const name = names[i];
-      const pct = 10 + (i / names.length) * 85;
-      setProgress({ pct, msg: `Generating ${i + 1}/${names.length}: ${name}`, done: false });
+    for (let i = 0; i < records.length; i++) {
+      const { name, row } = records[i];
+      const pct = 10 + (i / records.length) * 85;
+      setProgress({ pct, msg: `Generating ${i + 1}/${records.length}: ${name}`, done: false });
 
       const docZip = await JSZip.loadAsync(templateBytes);
       const xmlFiles = Object.keys(docZip.files).filter(
         (n) => n.endsWith(".xml") || n.endsWith(".rels")
       );
-      let foundAnyPlaceholder = false;
+      let foundAnyPrimaryPlaceholder = false;
 
       for (const xmlName of xmlFiles) {
-        const content = await docZip.files[xmlName].async("string");
-        const result = replaceInXml(content, marker, name);
-        if (result.replaced) {
-          foundAnyPlaceholder = true;
-          docZip.file(xmlName, result.xml);
+        let nextXml = await docZip.files[xmlName].async("string");
+
+        const primaryResult = replaceInXml(nextXml, marker, name);
+        nextXml = primaryResult.xml;
+        if (primaryResult.replaced) {
+          foundAnyPrimaryPlaceholder = true;
         }
+
+        for (const attr of activeAttrs) {
+          const attrValue = normalizeFieldValue(row[attr.column]);
+          const attrResult = replaceInXml(nextXml, attr.placeholder, attrValue);
+          nextXml = attrResult.xml;
+        }
+
+        nextXml = normalizeDocxTextSpacing(nextXml);
+
+        docZip.file(xmlName, nextXml);
       }
 
-      if (logoFile) {
-        const logoOk = await injectLogoIntoDocx(docZip, logoFile);
-        if (!logoOk) {
-          setProgress(null);
-          setError("Could not place logo in template. Please use a standard .docx template.");
-          return;
-        }
-      }
-
-      if (!foundAnyPlaceholder) {
+      if (!foundAnyPrimaryPlaceholder) {
         setProgress(null);
         setError(`Placeholder \"${marker}\" was not found in template. Make sure it exactly matches the text inside the .docx file.`);
         return;
@@ -271,7 +205,7 @@ export default function App() {
     const zipBlob = await outZip.generateAsync({ type: "blob" });
     setProgress({
       pct: 100,
-      msg: `${names.length} certificate${names.length !== 1 ? "s" : ""} generated!`,
+      msg: `${records.length} certificate${records.length !== 1 ? "s" : ""} generated!`,
       done: true,
     });
 
@@ -325,18 +259,8 @@ export default function App() {
               fileName={rows.length > 0 ? `${rows.length} students loaded` : ""}
               onFile={handleExcel}
             />
-            <DropZone
-              accept=".png,.jpg,.jpeg,image/png,image/jpeg"
-              iconColor="#ea580c"
-              iconBg="#ffedd5"
-              title="Logo (.png / .jpg / .jpeg)"
-              hint="Drop your logo here or click to browse"
-              filled={!!logoFile}
-              fileName={logoFile?.name}
-              onFile={handleLogo}
-            />
           </div>
-          <div className="sample-hint">Use your provided DOCX template. The uploaded logo is placed at the top-left of each generated certificate.</div>
+          <div className="sample-hint">Use your provided DOCX template and Excel list to generate certificates.</div>
         </div>
 
         {/* Step 2 */}
