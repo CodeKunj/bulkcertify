@@ -11,6 +11,7 @@ export default function LoginPage({
   continueAsGuest,
   guestLoading,
   guestUsesLeft,
+  onOpenPolicy,
 }) {
   return (
     <div className="app gate-app">
@@ -116,6 +117,9 @@ export default function LoginPage({
 
       <footer>
         All processing happens in your browser — no data is uploaded anywhere.
+        <button type="button" className="footer-link" onClick={onOpenPolicy}>
+          Privacy Policy
+        </button>
       </footer>
     </div>
   );

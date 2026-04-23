@@ -8,6 +8,8 @@ import DropZone from "./components/DropZone";
 import ProgressCard from "./components/ProgressCard";
 import LoginPage from "./components/LoginPage";
 import UpgradePage from "./components/UpgradePage";
+import PolicyPage from "./components/PolicyPage";
+import ProfilePage from "./components/ProfilePage";
 import "./App.css";
 import sampleDocxUrl from "../Sample_certificate.docx";
 
@@ -138,6 +140,7 @@ export default function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [screen, setScreen] = useState("generator");
+  const [policyReturnScreen, setPolicyReturnScreen] = useState("generator");
   const [authMode, setAuthMode] = useState("login");
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState("");
@@ -156,6 +159,8 @@ export default function App() {
   const [guestTrial, setGuestTrial] = useState(null);
   const [guestLoading, setGuestLoading] = useState(false);
   const [billingBusy, setBillingBusy] = useState(false);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileData, setProfileData] = useState(null);
   const [error, setError] = useState("");
 
   const getApiUrl = useCallback(
@@ -182,6 +187,15 @@ export default function App() {
 
   useEffect(() => {
     if (authLoading) return;
+
+    const isFlowScreen =
+      screen === "generator" ||
+      screen === "auth" ||
+      screen === "upgrade";
+
+    if (!isFlowScreen) {
+      return;
+    }
 
     if (isAuthenticated) {
       if (account?.isSubscribed) {
@@ -324,6 +338,41 @@ export default function App() {
     setAuthError("");
     setError("");
     setScreen("generator");
+  };
+
+  const openPolicyPage = (fromScreen = "generator") => {
+    setPolicyReturnScreen(fromScreen);
+    setScreen("policy");
+  };
+
+  const closePolicyPage = () => {
+    setScreen(policyReturnScreen || "generator");
+  };
+
+  const openProfilePage = async () => {
+    if (!isAuthenticated) {
+      setError("Please sign in to view profile.");
+      setScreen("auth");
+      return;
+    }
+
+    setError("");
+    setProfileBusy(true);
+    try {
+      const res = await authedFetch("/api/profile");
+      const body = await res.json();
+
+      if (!res.ok) {
+        throw new Error(body.error || "Could not load your profile.");
+      }
+
+      setProfileData(body.profile || null);
+      setScreen("profile");
+    } catch (err) {
+      setError(err.message || "Could not load your profile.");
+    } finally {
+      setProfileBusy(false);
+    }
   };
 
   const signOut = () => {
@@ -658,6 +707,7 @@ export default function App() {
         continueAsGuest={continueAsGuest}
         guestLoading={guestLoading}
         guestUsesLeft={guestUsesLeft}
+        onOpenPolicy={() => openPolicyPage("auth")}
       />
     );
   }
@@ -674,6 +724,21 @@ export default function App() {
         error={error}
         setAuthMode={setAuthMode}
         setScreen={setScreen}
+        onOpenPolicy={() => openPolicyPage("upgrade")}
+      />
+    );
+  }
+
+  if (screen === "policy") {
+    return <PolicyPage onBack={closePolicyPage} />;
+  }
+
+  if (screen === "profile") {
+    return (
+      <ProfilePage
+        profile={profileData}
+        loading={profileBusy}
+        onBack={() => setScreen("generator")}
       />
     );
   }
@@ -723,6 +788,14 @@ export default function App() {
               </div>
 
               <div className="account-actions">
+                <button
+                  type="button"
+                  className="account-btn"
+                  onClick={openProfilePage}
+                  disabled={accountLoading || profileBusy}
+                >
+                  {profileBusy ? "Opening Profile..." : "View Profile"}
+                </button>
                 {!account?.isSubscribed ? (
                   <button
                     type="button"
@@ -952,6 +1025,9 @@ export default function App() {
 
       <footer>
         All processing happens in your browser — no data is uploaded anywhere.
+        <button type="button" className="footer-link" onClick={() => openPolicyPage("generator")}>
+          Privacy Policy
+        </button>
       </footer>
     </div>
   );

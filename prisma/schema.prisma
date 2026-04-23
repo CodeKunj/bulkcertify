@@ -13,10 +13,32 @@ model User {
   trialUsageCount     Int      @default(3)
   isSubscribed        Boolean  @default(false)
   subscriptionId      String?
+  subscriptionStartDate DateTime?
   subscriptionEndDate DateTime?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
+  planHistory         PlanHistory[]
+
+  @@index([subscriptionId])
+}
+
+model PlanHistory {
+  id               String   @id @default(cuid())
+  userId           String
+  planName         String
+  billingCycle     String
+  status           String
+  subscriptionId   String
+  subscriptionStartDate DateTime?
+  subscriptionEndDate   DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
   @@index([subscriptionId])
 }
 

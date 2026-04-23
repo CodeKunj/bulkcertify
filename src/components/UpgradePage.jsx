@@ -8,6 +8,7 @@ export default function UpgradePage({
   error,
   setAuthMode,
   setScreen,
+  onOpenPolicy,
 }) {
   return (
     <div className="app gate-app">
@@ -112,6 +113,9 @@ export default function UpgradePage({
 
       <footer>
         All processing happens in your browser — no data is uploaded anywhere.
+        <button type="button" className="footer-link" onClick={onOpenPolicy}>
+          Privacy Policy
+        </button>
       </footer>
     </div>
   );

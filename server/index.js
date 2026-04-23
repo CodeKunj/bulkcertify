@@ -103,6 +103,15 @@ function getSubscriptionEndDate(subscription) {
   );
 }
 
+function getSubscriptionStartDate(subscription) {
+  return (
+    toDateFromEpoch(subscription?.current_start) ||
+    toDateFromEpoch(subscription?.start_at) ||
+    toDateFromEpoch(subscription?.created_at) ||
+    null
+  );
+}
+
 function isActiveRazorpaySubscription(subscription) {
   const status = String(subscription?.status || "").toLowerCase();
   return status === "active" || status === "authenticated";
@@ -113,16 +122,61 @@ async function updateUserBySubscription(subscription) {
   if (!subscriptionId) return;
 
   const isSubscribed = isActiveRazorpaySubscription(subscription);
+  const subscriptionStartDate = getSubscriptionStartDate(subscription);
   const subscriptionEndDate = getSubscriptionEndDate(subscription);
 
-  await prisma.user.updateMany({
+  const users = await prisma.user.findMany({
     where: { subscriptionId },
-    data: {
-      isSubscribed,
-      subscriptionId,
-      subscriptionEndDate,
-    },
+    select: { id: true },
   });
+
+  if (!users.length) return;
+
+  for (const user of users) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        isSubscribed,
+        subscriptionId,
+        subscriptionStartDate,
+        subscriptionEndDate,
+      },
+    });
+
+    await prisma.planHistory.create({
+      data: {
+        id: generateDbId(),
+        userId: user.id,
+        planName: "Pro Plan",
+        billingCycle: "Monthly",
+        status: isSubscribed ? "ACTIVE" : "INACTIVE",
+        subscriptionId,
+        subscriptionStartDate,
+        subscriptionEndDate,
+      },
+    });
+  }
+}
+
+function daysRemainingFrom(endDate) {
+  if (!endDate) return 0;
+  const end = new Date(endDate).getTime();
+  const now = Date.now();
+  if (end <= now) return 0;
+  return Math.ceil((end - now) / (1000 * 60 * 60 * 24));
+}
+
+function toPlanDto(plan) {
+  return {
+    id: plan.id,
+    planName: plan.planName,
+    billingCycle: plan.billingCycle,
+    status: plan.status,
+    subscriptionId: plan.subscriptionId,
+    startDate: plan.subscriptionStartDate,
+    endDate: plan.subscriptionEndDate,
+    daysRemaining: daysRemainingFrom(plan.subscriptionEndDate),
+  };
 }
 
 function verifyRazorpaySignature(payload, signature, secret) {
@@ -182,13 +236,7 @@ app.post(
 
       if (subscription?.id) {
         if (event.event === "subscription.cancelled" || event.event === "subscription.completed") {
-          await prisma.user.updateMany({
-            where: { subscriptionId: String(subscription.id) },
-            data: {
-              isSubscribed: false,
-              subscriptionEndDate: getSubscriptionEndDate(subscription),
-            },
-          });
+          await updateUserBySubscription(subscription);
         } else {
           await updateUserBySubscription(subscription);
         }
@@ -262,12 +310,46 @@ app.get("/api/me", requireLocalAuth, async (req, res) => {
       email: user.email,
       trialUsageCount: user.trialUsageCount,
       isSubscribed: subscribed,
+      subscriptionStartDate: user.subscriptionStartDate,
       subscriptionEndDate: user.subscriptionEndDate,
       subscriptionId: user.subscriptionId,
       canGenerate: subscribed || user.trialUsageCount > 0,
     });
   } catch (err) {
     res.status(500).json({ error: err.message || "Failed to load account." });
+  }
+});
+
+app.get("/api/profile", requireLocalAuth, async (req, res) => {
+  try {
+    const user = await getOrCreateUser(req);
+    const subscribed = isActiveSubscriber(user);
+
+    const plans = await prisma.planHistory.findMany({
+      where: { userId: user.id },
+      orderBy: [
+        { subscriptionStartDate: "desc" },
+        { createdAt: "desc" },
+      ],
+    });
+
+    const currentPlan = plans.find((plan) => plan.status === "ACTIVE") || null;
+    const previousPlans = plans
+      .filter((plan) => !currentPlan || plan.id !== currentPlan.id)
+      .map(toPlanDto);
+
+    return res.json({
+      profile: {
+        id: user.id,
+        email: user.email,
+        trialUsageCount: user.trialUsageCount,
+        isSubscribed: subscribed,
+        currentPlan: currentPlan ? toPlanDto(currentPlan) : null,
+        previousPlans,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Failed to load profile." });
   }
 });
 
@@ -375,16 +457,9 @@ app.post("/api/razorpay/verify-payment", requireLocalAuth, async (req, res) => {
     }
 
     const subscription = razorpay ? await razorpay.subscriptions.fetch(subscriptionId) : null;
-    const subscriptionEndDate = getSubscriptionEndDate(subscription) || null;
-
-    await prisma.user.updateMany({
-      where: { subscriptionId: String(subscriptionId) },
-      data: {
-        isSubscribed: true,
-        subscriptionId: String(subscriptionId),
-        subscriptionEndDate,
-      },
-    });
+    if (subscription) {
+      await updateUserBySubscription({ ...subscription, status: "active" });
+    }
 
     const user = await getOrCreateUser(req);
     const refreshed = await prisma.user.findUnique({
@@ -393,6 +468,7 @@ app.post("/api/razorpay/verify-payment", requireLocalAuth, async (req, res) => {
         email: true,
         trialUsageCount: true,
         isSubscribed: true,
+        subscriptionStartDate: true,
         subscriptionEndDate: true,
         subscriptionId: true,
       },
@@ -403,6 +479,7 @@ app.post("/api/razorpay/verify-payment", requireLocalAuth, async (req, res) => {
         email: refreshed?.email || user.email,
         trialUsageCount: refreshed?.trialUsageCount ?? 3,
         isSubscribed: !!refreshed?.isSubscribed,
+        subscriptionStartDate: refreshed?.subscriptionStartDate,
         subscriptionEndDate: refreshed?.subscriptionEndDate,
         subscriptionId: refreshed?.subscriptionId,
         canGenerate: true,
