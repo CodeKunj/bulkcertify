@@ -34,14 +34,14 @@ export default function AdminPage({
   }, [clients]);
 
   return (
-    <div className="app">
+    <div className="app admin-page-desktop">
       <div className="live-bg" aria-hidden="true">
         <div className="aurora aurora-a" />
         <div className="aurora aurora-b" />
         <div className="grid-drift" />
       </div>
 
-      <main className="policy-shell">
+      <main className="policy-shell admin-shell admin-desktop-lock">
         <section className="policy-card profile-card admin-card">
           <div className="policy-head admin-head">
             <div>
@@ -85,7 +85,7 @@ export default function AdminPage({
             </article>
           </div>
 
-          <section className="admin-section">
+          <section className="admin-section admin-section-clients">
             <div className="admin-section-head">
               <h2>Client Management</h2>
               <input
@@ -181,75 +181,77 @@ export default function AdminPage({
             </div>
           </section>
 
-          <section className="admin-section">
-            <div className="admin-section-head">
-              <h2>Recent Payments</h2>
-            </div>
-            <div className="profile-table-wrap admin-scroll-wrap">
-              <table className="profile-table admin-table">
-                <thead>
-                  <tr>
-                    <th>User</th>
-                    <th>Plan</th>
-                    <th>Status</th>
-                    <th>Subscription Id</th>
-                    <th>Created</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {payments.map((payment) => (
-                    <tr key={payment.id}>
-                      <td>{payment.userEmail || "-"}</td>
-                      <td>{payment.planName} ({payment.billingCycle})</td>
-                      <td>{payment.status}</td>
-                      <td>{payment.subscriptionId}</td>
-                      <td>{formatDate(payment.createdAt)}</td>
-                    </tr>
-                  ))}
-                  {!payments.length && (
+          <div className="admin-lower-grid">
+            <section className="admin-section">
+              <div className="admin-section-head">
+                <h2>Recent Payments</h2>
+              </div>
+              <div className="profile-table-wrap admin-scroll-wrap">
+                <table className="profile-table admin-table">
+                  <thead>
                     <tr>
-                      <td colSpan={5}>No payment records found.</td>
+                      <th>User</th>
+                      <th>Plan</th>
+                      <th>Status</th>
+                      <th>Subscription Id</th>
+                      <th>Created</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                  </thead>
+                  <tbody>
+                    {payments.map((payment) => (
+                      <tr key={payment.id}>
+                        <td>{payment.userEmail || "-"}</td>
+                        <td>{payment.planName} ({payment.billingCycle})</td>
+                        <td>{payment.status}</td>
+                        <td>{payment.subscriptionId}</td>
+                        <td>{formatDate(payment.createdAt)}</td>
+                      </tr>
+                    ))}
+                    {!payments.length && (
+                      <tr>
+                        <td colSpan={5}>No payment records found.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
 
-          <section className="admin-section">
-            <div className="admin-section-head">
-              <h2>Recent Activities</h2>
-            </div>
-            <div className="profile-table-wrap admin-scroll-wrap">
-              <table className="profile-table admin-table">
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>Action</th>
-                    <th>Actor</th>
-                    <th>Target</th>
-                    <th>IP</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {activities.map((activity) => (
-                    <tr key={activity.id}>
-                      <td>{formatDate(activity.createdAt)}</td>
-                      <td>{activity.action}</td>
-                      <td>{activity.actorEmail || "-"}</td>
-                      <td>{activity.targetType || "-"} {activity.targetId || ""}</td>
-                      <td>{activity.ipAddress || "-"}</td>
-                    </tr>
-                  ))}
-                  {!activities.length && (
+            <section className="admin-section">
+              <div className="admin-section-head">
+                <h2>Recent Activities</h2>
+              </div>
+              <div className="profile-table-wrap admin-scroll-wrap">
+                <table className="profile-table admin-table admin-table-activities">
+                  <thead>
                     <tr>
-                      <td colSpan={5}>No activity found yet.</td>
+                      <th>Time</th>
+                      <th>Action</th>
+                      <th>Actor</th>
+                      <th className="activities-target-col">Target</th>
+                      <th>IP</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                  </thead>
+                  <tbody>
+                    {activities.map((activity) => (
+                      <tr key={activity.id}>
+                        <td>{formatDate(activity.createdAt)}</td>
+                        <td>{activity.action}</td>
+                        <td>{activity.actorEmail || "-"}</td>
+                        <td className="activities-target-col">{activity.targetType || "-"} {activity.targetId || ""}</td>
+                        <td>{activity.ipAddress || "-"}</td>
+                      </tr>
+                    ))}
+                    {!activities.length && (
+                      <tr>
+                        <td colSpan={5}>No activity found yet.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
         </section>
       </main>
     </div>
