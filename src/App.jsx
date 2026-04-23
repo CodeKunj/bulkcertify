@@ -10,6 +10,7 @@ import LoginPage from "./components/LoginPage";
 import UpgradePage from "./components/UpgradePage";
 import PolicyPage from "./components/PolicyPage";
 import ProfilePage from "./components/ProfilePage";
+import AdminPage from "./components/AdminPage";
 import "./App.css";
 import sampleDocxUrl from "../Sample_certificate.docx";
 
@@ -161,6 +162,14 @@ export default function App() {
   const [billingBusy, setBillingBusy] = useState(false);
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileData, setProfileData] = useState(null);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminError, setAdminError] = useState("");
+  const [adminOverview, setAdminOverview] = useState({});
+  const [adminClients, setAdminClients] = useState([]);
+  const [adminPayments, setAdminPayments] = useState([]);
+  const [adminActivities, setAdminActivities] = useState([]);
+  const [adminClientBusyId, setAdminClientBusyId] = useState(null);
+  const [adminSearch, setAdminSearch] = useState("");
   const [error, setError] = useState("");
 
   const getApiUrl = useCallback(
@@ -198,7 +207,7 @@ export default function App() {
     }
 
     if (isAuthenticated) {
-      if (account?.isSubscribed) {
+      if (account?.isAdmin || account?.isSubscribed) {
         setScreen("generator");
       } else if (!accountLoading && account && !account.canGenerate) {
         setScreen("upgrade");
@@ -399,7 +408,151 @@ export default function App() {
     setAuthMode("login");
     setAccount(null);
     setGuestTrial(null);
+    setAdminOverview({});
+    setAdminClients([]);
+    setAdminPayments([]);
+    setAdminActivities([]);
+    setAdminSearch("");
+    setAdminError("");
     setError("");
+  };
+
+  const loadAdminData = useCallback(async (searchValue = adminSearch) => {
+    if (!isAuthenticated) {
+      setAdminError("Please sign in first.");
+      return;
+    }
+
+    setAdminLoading(true);
+    setAdminError("");
+    try {
+      const query = searchValue.trim() ? `?search=${encodeURIComponent(searchValue.trim())}` : "";
+
+      const [overviewRes, clientsRes, paymentsRes, activitiesRes] = await Promise.all([
+        authedFetch("/api/admin/overview"),
+        authedFetch(`/api/admin/clients${query}`),
+        authedFetch("/api/admin/payments?limit=100"),
+        authedFetch("/api/admin/activities?limit=80"),
+      ]);
+
+      const [overviewBody, clientsBody, paymentsBody, activitiesBody] = await Promise.all([
+        overviewRes.json(),
+        clientsRes.json(),
+        paymentsRes.json(),
+        activitiesRes.json(),
+      ]);
+
+      if (!overviewRes.ok) throw new Error(overviewBody.error || "Failed to load admin overview.");
+      if (!clientsRes.ok) throw new Error(clientsBody.error || "Failed to load clients.");
+      if (!paymentsRes.ok) throw new Error(paymentsBody.error || "Failed to load payments.");
+      if (!activitiesRes.ok) throw new Error(activitiesBody.error || "Failed to load activities.");
+
+      setAdminOverview(overviewBody.overview || {});
+      setAdminClients(clientsBody.clients || []);
+      setAdminPayments(paymentsBody.payments || []);
+      setAdminActivities(activitiesBody.activities || []);
+    } catch (err) {
+      setAdminError(err.message || "Could not load admin panel data.");
+    } finally {
+      setAdminLoading(false);
+    }
+  }, [adminSearch, authedFetch, isAuthenticated]);
+
+  const openAdminPanel = async () => {
+    if (!account?.isAdmin) {
+      setError("Admin access only.");
+      return;
+    }
+    setScreen("admin");
+    await loadAdminData("");
+  };
+
+  const updateAdminSearch = async (value) => {
+    setAdminSearch(value);
+    await loadAdminData(value);
+  };
+
+  const updateClientTrial = async (client, delta) => {
+    setAdminClientBusyId(client.id);
+    setAdminError("");
+    try {
+      const res = await authedFetch(`/api/admin/clients/${client.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          trialUsageCount: Math.max(0, Number(client.trialUsageCount || 0) + delta),
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Could not update client.");
+
+      setAdminClients((prev) => prev.map((entry) => (entry.id === client.id ? body.client : entry)));
+      await loadAdminData(adminSearch);
+    } catch (err) {
+      setAdminError(err.message || "Could not update client.");
+    } finally {
+      setAdminClientBusyId(null);
+    }
+  };
+
+  const resetClientTrial = async (clientId) => {
+    setAdminClientBusyId(clientId);
+    setAdminError("");
+    try {
+      const res = await authedFetch(`/api/admin/clients/${clientId}/reset-trial`, {
+        method: "POST",
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Could not reset trial.");
+
+      setAdminClients((prev) => prev.map((entry) => (entry.id === clientId ? body.client : entry)));
+      await loadAdminData(adminSearch);
+    } catch (err) {
+      setAdminError(err.message || "Could not reset trial.");
+    } finally {
+      setAdminClientBusyId(null);
+    }
+  };
+
+  const toggleClientSubscription = async (client) => {
+    setAdminClientBusyId(client.id);
+    setAdminError("");
+    try {
+      const res = await authedFetch(`/api/admin/clients/${client.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ isSubscribed: !client.isSubscribed }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Could not update subscription.");
+
+      setAdminClients((prev) => prev.map((entry) => (entry.id === client.id ? body.client : entry)));
+      await loadAdminData(adminSearch);
+    } catch (err) {
+      setAdminError(err.message || "Could not update subscription.");
+    } finally {
+      setAdminClientBusyId(null);
+    }
+  };
+
+  const deleteClient = async (client) => {
+    const confirmed = window.confirm(`Delete client ${client.email}? This cannot be undone.`);
+    if (!confirmed) return;
+
+    setAdminClientBusyId(client.id);
+    setAdminError("");
+    try {
+      const res = await authedFetch(`/api/admin/clients/${client.id}`, {
+        method: "DELETE",
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Could not delete client.");
+
+      setAdminClients((prev) => prev.filter((entry) => entry.id !== client.id));
+      await loadAdminData(adminSearch);
+    } catch (err) {
+      setAdminError(err.message || "Could not delete client.");
+    } finally {
+      setAdminClientBusyId(null);
+    }
   };
 
   const handleExcel = useCallback((file) => {
@@ -615,13 +768,14 @@ export default function App() {
           return;
         }
 
-        shouldShowUpgrade = !consumeBody.isSubscribed && (consumeBody.trialUsageCount || 0) === 0;
+        shouldShowUpgrade = !consumeBody.canGenerate;
 
         setAccount((prev) => ({
           ...(prev || {}),
-          canGenerate: consumeBody.isSubscribed || consumeBody.trialUsageCount > 0,
+          canGenerate: !!consumeBody.canGenerate,
           trialUsageCount: consumeBody.trialUsageCount,
           isSubscribed: !!consumeBody.isSubscribed,
+          isAdmin: !!consumeBody.isAdmin,
         }));
       } catch (err) {
         setError(err.message || "Could not validate trial usage.");
@@ -758,6 +912,27 @@ export default function App() {
     );
   }
 
+  if (screen === "admin") {
+    return (
+      <AdminPage
+        loading={adminLoading}
+        error={adminError}
+        overview={adminOverview}
+        clients={adminClients}
+        payments={adminPayments}
+        activities={adminActivities}
+        clientBusyId={adminClientBusyId}
+        onBack={() => setScreen("generator")}
+        onRefresh={() => loadAdminData(adminSearch)}
+        onSearch={updateAdminSearch}
+        onUpdateTrial={updateClientTrial}
+        onResetTrial={resetClientTrial}
+        onToggleSubscription={toggleClientSubscription}
+        onDeleteClient={deleteClient}
+      />
+    );
+  }
+
   return (
     <div className="app">
       <div className="live-bg" aria-hidden="true">
@@ -803,6 +978,16 @@ export default function App() {
               </div>
 
               <div className="account-actions">
+                {account?.isAdmin && (
+                  <button
+                    type="button"
+                    className="account-btn"
+                    onClick={openAdminPanel}
+                    disabled={accountLoading}
+                  >
+                    Admin Panel
+                  </button>
+                )}
                 <button
                   type="button"
                   className="account-btn"

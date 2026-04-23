@@ -625,6 +625,8 @@ main {
 .account-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .account-btn {
@@ -896,6 +898,129 @@ main {
   letter-spacing: 0.04em;
 }
 
+.admin-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.admin-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.admin-head-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.admin-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.admin-stat {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: #fbfaf7;
+  padding: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.admin-stat span {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--hint);
+}
+
+.admin-stat strong {
+  font-family: 'Syne', sans-serif;
+  font-size: 1.2rem;
+}
+
+.admin-section {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.admin-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+  margin-bottom: 0.7rem;
+}
+
+.admin-section-head h2 {
+  font-family: 'Syne', sans-serif;
+  font-size: 0.98rem;
+}
+
+.admin-search {
+  min-width: 220px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-xs);
+  padding: 0.55rem 0.75rem;
+  font-size: 0.82rem;
+  font-family: 'Mulish', sans-serif;
+}
+
+.admin-search:focus {
+  outline: none;
+  border-color: var(--text);
+}
+
+.admin-table td {
+  vertical-align: top;
+}
+
+.admin-scroll-wrap {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.admin-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.admin-action-btn {
+  border: 1px solid var(--border2);
+  background: #f7f5f0;
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.72rem;
+  font-family: 'Mulish', sans-serif;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.admin-action-btn:hover:not(:disabled) {
+  border-color: var(--text);
+}
+
+.admin-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.admin-action-btn.danger {
+  color: #b91c1c;
+  border-color: #f7cfcf;
+  background: #fff5f5;
+}
+
 @media (max-width: 480px) {
   .account-line,
   .account-top {
@@ -932,6 +1057,29 @@ main {
 
   .profile-grid {
     grid-template-columns: 1fr;
+  }
+
+  .admin-head {
+    flex-direction: column;
+  }
+
+  .admin-head-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .admin-overview-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .admin-section-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .admin-search {
+    width: 100%;
+    min-width: 0;
   }
 }
 

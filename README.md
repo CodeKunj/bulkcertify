@@ -2,17 +2,18 @@
 
 Bulk certificate generator with:
 
-- Temporary local email/password placeholder auth
+- Local username/password auth (signup creates users, login verifies credentials)
 - 3-use free trial for guests tracked in PostgreSQL
 - 3-use free trial for signed-in users tracked in PostgreSQL
 - Razorpay subscription billing
 - Server-side usage enforcement APIs
+- Admin panel for activities, clients, and payments
 - DOCX/PDF/JPG export
 
 ## Stack
 
 - Frontend: Vite + React
-- Auth: local placeholder email/password flow
+- Auth: local username/password flow
 - Backend: Express
 - DB: PostgreSQL + Prisma
 - Billing: Razorpay
@@ -47,6 +48,23 @@ npm run dev
 Frontend runs on `http://localhost:5173` and backend on `http://localhost:8787`.
 
 The current auth flow is a development placeholder: sign in with any email and any non-empty password, and the app stores that email locally for account and billing actions.
+
+## Admin Panel
+
+Set your admin user email in `.env`:
+
+```text
+ADMIN_EMAIL=your-email@example.com
+```
+
+Then sign up with the same email and open Admin Panel from the main dashboard.
+
+Admin panel sections:
+
+- Overview stats
+- Activity feed (auth, usage, subscription, admin actions)
+- Client management (trial reset, trial increment, subscription toggle, delete)
+- Payment history (from plan history records)
 
 ## Razorpay Webhook
 

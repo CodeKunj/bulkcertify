@@ -11,6 +11,7 @@ const prisma = new PrismaClient();
 
 const port = Number(process.env.PORT || 8787);
 const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+const adminEmail = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
 const razorpayKeyId = process.env.RAZORPAY_KEY_ID;
 const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
 const razorpayWebhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
@@ -59,6 +60,14 @@ function normalizeAuthIdentifier(value) {
   return value.trim().toLowerCase();
 }
 
+function getClientIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim()) {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.ip || null;
+}
+
 function hashPassword(password) {
   const salt = randomBytes(16).toString("hex");
   const hash = scryptSync(password, salt, 64).toString("hex");
@@ -77,17 +86,49 @@ function verifyPassword(password, storedHash) {
   return timingSafeEqual(expectedBuffer, derived);
 }
 
+function isAdminUser(user) {
+  if (!user) return false;
+  return !!(user.isAdmin || user.email === adminEmail);
+}
+
 function toAccountPayload(user) {
   const subscribed = isActiveSubscriber(user);
+  const isAdmin = isAdminUser(user);
   return {
     email: user.email,
+    isAdmin,
     trialUsageCount: user.trialUsageCount,
-    isSubscribed: subscribed,
+    isSubscribed: isAdmin ? true : subscribed,
     subscriptionStartDate: user.subscriptionStartDate,
     subscriptionEndDate: user.subscriptionEndDate,
     subscriptionId: user.subscriptionId,
-    canGenerate: subscribed || user.trialUsageCount > 0,
+    canGenerate: isAdmin || subscribed || user.trialUsageCount > 0,
   };
+}
+
+async function findUserByEmail(email) {
+  if (!email) return null;
+  return prisma.user.findUnique({ where: { email } });
+}
+
+async function logActivity(req, payload) {
+  try {
+    const email = normalizeAuthIdentifier(payload?.email || req.localAuthEmail || "");
+    const user = email ? await findUserByEmail(email) : null;
+
+    await prisma.activityLog.create({
+      data: {
+        userId: user?.id || null,
+        action: String(payload?.action || "UNKNOWN"),
+        targetType: payload?.targetType ? String(payload.targetType) : null,
+        targetId: payload?.targetId ? String(payload.targetId) : null,
+        details: payload?.details ?? null,
+        ipAddress: getClientIp(req),
+      },
+    });
+  } catch {
+    // Logging must never break the request path.
+  }
 }
 
 function requireLocalAuth(req, res, next) {
@@ -106,18 +147,33 @@ async function getOrCreateUser(req) {
     throw new Error("Unauthorized");
   }
 
-  return prisma.user.upsert({
-    where: { email },
-    create: {
-      id: generateDbId(),
-      email,
-      trialUsageCount: 3,
-      isSubscribed: false,
-    },
-    update: {
-      email,
-    },
-  });
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) {
+    throw new Error("Unauthorized");
+  }
+  return user;
+}
+
+async function requireAdmin(req, res, next) {
+  try {
+    if (!adminEmail) {
+      return res.status(500).json({ error: "Admin panel is not configured." });
+    }
+
+    if (req.localAuthEmail !== adminEmail) {
+      return res.status(403).json({ error: "Admin access only." });
+    }
+
+    const user = await findUserByEmail(req.localAuthEmail);
+    if (!user) {
+      return res.status(401).json({ error: "Admin account not found. Please sign up first." });
+    }
+
+    req.adminUser = user;
+    return next();
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Admin authorization failed." });
+  }
 }
 
 function toDateFromEpoch(value) {
@@ -314,7 +370,29 @@ app.post("/api/auth/signup", async (req, res) => {
 
     const existing = await prisma.user.findUnique({ where: { email: identifier } });
     if (existing) {
-      return res.status(409).json({ error: "User already exists. Please log in." });
+      const isLegacyPlaceholder =
+        !existing.passwordHash || existing.passwordHash === "legacy-missing-password";
+
+      if (!isLegacyPlaceholder) {
+        return res.status(409).json({ error: "User already exists. Please log in." });
+      }
+
+      const upgradedUser = await prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          passwordHash: hashPassword(password),
+          isAdmin: existing.isAdmin || identifier === adminEmail,
+        },
+      });
+
+      await logActivity(req, {
+        action: "AUTH_LEGACY_PASSWORD_SET",
+        email: upgradedUser.email,
+        targetType: "USER",
+        targetId: upgradedUser.id,
+      });
+
+      return res.status(200).json({ account: toAccountPayload(upgradedUser) });
     }
 
     const user = await prisma.user.create({
@@ -322,9 +400,18 @@ app.post("/api/auth/signup", async (req, res) => {
         id: generateDbId(),
         email: identifier,
         passwordHash: hashPassword(password),
+        isAdmin: identifier === adminEmail,
         trialUsageCount: 3,
         isSubscribed: false,
       },
+    });
+
+    await logActivity(req, {
+      action: "AUTH_SIGNUP",
+      email: user.email,
+      targetType: "USER",
+      targetId: user.id,
+      details: { isAdmin: user.isAdmin },
     });
 
     return res.status(201).json({ account: toAccountPayload(user) });
@@ -343,9 +430,34 @@ app.post("/api/auth/login", async (req, res) => {
     }
 
     const user = await prisma.user.findUnique({ where: { email: identifier } });
+    if (user && (!user.passwordHash || user.passwordHash === "legacy-missing-password")) {
+      await logActivity(req, {
+        action: "AUTH_LOGIN_FAILED",
+        email: identifier,
+        targetType: "USER",
+        details: { reason: "LEGACY_PASSWORD_NEEDS_RESET" },
+      });
+      return res.status(401).json({
+        error: "This account needs a password reset. Use Sign Up once with the same username to set your password.",
+      });
+    }
+
     if (!user || !verifyPassword(password, user.passwordHash)) {
+      await logActivity(req, {
+        action: "AUTH_LOGIN_FAILED",
+        email: identifier,
+        targetType: "USER",
+        details: { reason: "INVALID_CREDENTIALS" },
+      });
       return res.status(401).json({ error: "Incorrect login password." });
     }
+
+    await logActivity(req, {
+      action: "AUTH_LOGIN_SUCCESS",
+      email: user.email,
+      targetType: "USER",
+      targetId: user.id,
+    });
 
     return res.json({ account: toAccountPayload(user) });
   } catch (err) {
@@ -381,6 +493,14 @@ app.post("/api/guest/consume", async (req, res) => {
     }
 
     const refreshed = await prisma.guestUsage.findUnique({ where: { id: usage.id } });
+    await logActivity(req, {
+      action: "GUEST_USAGE_CONSUMED",
+      targetType: "GUEST",
+      targetId: usage.id,
+      details: {
+        remainingUses: refreshed?.remainingUses ?? 0,
+      },
+    });
     return res.json({
       allowed: true,
       remainingUses: refreshed?.remainingUses ?? 0,
@@ -437,11 +557,23 @@ app.post("/api/usage/consume", requireLocalAuth, async (req, res) => {
   try {
     const user = await getOrCreateUser(req);
 
+    if (isAdminUser(user)) {
+      return res.json({
+        allowed: true,
+        trialUsageCount: user.trialUsageCount,
+        isSubscribed: true,
+        isAdmin: true,
+        canGenerate: true,
+      });
+    }
+
     if (isActiveSubscriber(user)) {
       return res.json({
         allowed: true,
         trialUsageCount: user.trialUsageCount,
         isSubscribed: true,
+        isAdmin: false,
+        canGenerate: true,
       });
     }
 
@@ -468,10 +600,21 @@ app.post("/api/usage/consume", requireLocalAuth, async (req, res) => {
       select: { trialUsageCount: true, isSubscribed: true },
     });
 
+    await logActivity(req, {
+      action: "USER_USAGE_CONSUMED",
+      targetType: "USER",
+      targetId: user.id,
+      details: {
+        trialUsageCount: refreshed?.trialUsageCount ?? 0,
+      },
+    });
+
     return res.json({
       allowed: true,
       trialUsageCount: refreshed?.trialUsageCount ?? 0,
       isSubscribed: refreshed?.isSubscribed ?? false,
+      isAdmin: false,
+      canGenerate: (refreshed?.isSubscribed ?? false) || (refreshed?.trialUsageCount ?? 0) > 0,
     });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Could not validate usage." });
@@ -501,6 +644,13 @@ app.post("/api/razorpay/create-subscription", requireLocalAuth, async (req, res)
         subscriptionId: String(subscription.id),
         isSubscribed: false,
       },
+    });
+
+    await logActivity(req, {
+      action: "SUBSCRIPTION_CREATED",
+      targetType: "SUBSCRIPTION",
+      targetId: String(subscription.id),
+      details: { userId: user.id },
     });
 
     return res.json({
@@ -554,6 +704,14 @@ app.post("/api/razorpay/verify-payment", requireLocalAuth, async (req, res) => {
       },
     });
 
+    await logActivity(req, {
+      action: "PAYMENT_VERIFIED",
+      email: user.email,
+      targetType: "SUBSCRIPTION",
+      targetId: String(subscriptionId),
+      details: { paymentId: String(paymentId) },
+    });
+
     return res.json({
       account: {
         email: refreshed?.email || user.email,
@@ -567,6 +725,255 @@ app.post("/api/razorpay/verify-payment", requireLocalAuth, async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Failed to verify Razorpay payment." });
+  }
+});
+
+app.get("/api/admin/overview", requireLocalAuth, requireAdmin, async (req, res) => {
+  try {
+    const [totalUsers, activeSubscribers, totalGuests] = await Promise.all([
+      prisma.user.count(),
+      prisma.user.count({
+        where: {
+          isSubscribed: true,
+          OR: [
+            { subscriptionEndDate: null },
+            { subscriptionEndDate: { gt: new Date() } },
+          ],
+        },
+      }),
+      prisma.guestUsage.count(),
+    ]);
+
+    const users = await prisma.user.findMany({
+      select: { trialUsageCount: true, isSubscribed: true },
+    });
+    const guests = await prisma.guestUsage.findMany({
+      select: { remainingUses: true },
+    });
+
+    const totalUserTrialConsumed = users.reduce((sum, user) => {
+      return sum + Math.max(3 - (user.trialUsageCount || 0), 0);
+    }, 0);
+    const totalGuestTrialConsumed = guests.reduce((sum, guest) => {
+      return sum + Math.max(3 - (guest.remainingUses || 0), 0);
+    }, 0);
+
+    const totalPayments = await prisma.planHistory.count();
+    const activePlans = await prisma.planHistory.count({ where: { status: "ACTIVE" } });
+
+    return res.json({
+      overview: {
+        totalUsers,
+        activeSubscribers,
+        totalGuests,
+        totalPayments,
+        activePlans,
+        totalGenerations: totalUserTrialConsumed + totalGuestTrialConsumed,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not load admin overview." });
+  }
+});
+
+app.get("/api/admin/activities", requireLocalAuth, requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit || 50), 1), 200);
+    const activities = await prisma.activityLog.findMany({
+      take: limit,
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: {
+          select: { email: true },
+        },
+      },
+    });
+
+    return res.json({
+      activities: activities.map((entry) => ({
+        id: entry.id,
+        action: entry.action,
+        actorEmail: entry.user?.email || null,
+        targetType: entry.targetType,
+        targetId: entry.targetId,
+        details: entry.details,
+        ipAddress: entry.ipAddress,
+        createdAt: entry.createdAt,
+      })),
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not load activity logs." });
+  }
+});
+
+app.get("/api/admin/clients", requireLocalAuth, requireAdmin, async (req, res) => {
+  try {
+    const search = String(req.query.search || "").trim().toLowerCase();
+    const users = await prisma.user.findMany({
+      where: search
+        ? {
+            email: { contains: search },
+          }
+        : undefined,
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        email: true,
+        isAdmin: true,
+        trialUsageCount: true,
+        isSubscribed: true,
+        subscriptionStartDate: true,
+        subscriptionEndDate: true,
+        createdAt: true,
+      },
+    });
+
+    return res.json({ clients: users });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not load clients." });
+  }
+});
+
+app.patch("/api/admin/clients/:id", requireLocalAuth, requireAdmin, async (req, res) => {
+  try {
+    const userId = String(req.params.id || "");
+    if (!userId) {
+      return res.status(400).json({ error: "Client id is required." });
+    }
+
+    const payload = {};
+    if (typeof req.body?.trialUsageCount === "number") {
+      payload.trialUsageCount = Math.max(0, Math.min(1000, Math.floor(req.body.trialUsageCount)));
+    }
+    if (typeof req.body?.isSubscribed === "boolean") {
+      payload.isSubscribed = req.body.isSubscribed;
+      if (!req.body.isSubscribed) {
+        payload.subscriptionEndDate = null;
+      }
+    }
+
+    if (!Object.keys(payload).length) {
+      return res.status(400).json({ error: "No valid fields to update." });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: payload,
+      select: {
+        id: true,
+        email: true,
+        isAdmin: true,
+        trialUsageCount: true,
+        isSubscribed: true,
+        subscriptionStartDate: true,
+        subscriptionEndDate: true,
+        createdAt: true,
+      },
+    });
+
+    await logActivity(req, {
+      action: "ADMIN_CLIENT_UPDATED",
+      email: req.localAuthEmail,
+      targetType: "USER",
+      targetId: userId,
+      details: payload,
+    });
+
+    return res.json({ client: updated });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not update client." });
+  }
+});
+
+app.post("/api/admin/clients/:id/reset-trial", requireLocalAuth, requireAdmin, async (req, res) => {
+  try {
+    const userId = String(req.params.id || "");
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { trialUsageCount: 3 },
+      select: {
+        id: true,
+        email: true,
+        isAdmin: true,
+        trialUsageCount: true,
+        isSubscribed: true,
+        subscriptionStartDate: true,
+        subscriptionEndDate: true,
+        createdAt: true,
+      },
+    });
+
+    await logActivity(req, {
+      action: "ADMIN_CLIENT_TRIAL_RESET",
+      email: req.localAuthEmail,
+      targetType: "USER",
+      targetId: userId,
+    });
+
+    return res.json({ client: updated });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not reset trial usage." });
+  }
+});
+
+app.delete("/api/admin/clients/:id", requireLocalAuth, requireAdmin, async (req, res) => {
+  try {
+    const userId = String(req.params.id || "");
+    const target = await prisma.user.findUnique({ where: { id: userId } });
+    if (!target) {
+      return res.status(404).json({ error: "Client not found." });
+    }
+    if (target.email === adminEmail || target.isAdmin) {
+      return res.status(400).json({ error: "Admin account cannot be deleted." });
+    }
+
+    await prisma.user.delete({ where: { id: userId } });
+
+    await logActivity(req, {
+      action: "ADMIN_CLIENT_DELETED",
+      email: req.localAuthEmail,
+      targetType: "USER",
+      targetId: userId,
+      details: { deletedEmail: target.email },
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not delete client." });
+  }
+});
+
+app.get("/api/admin/payments", requireLocalAuth, requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 500);
+    const payments = await prisma.planHistory.findMany({
+      take: limit,
+      orderBy: [
+        { createdAt: "desc" },
+      ],
+      include: {
+        user: {
+          select: { email: true },
+        },
+      },
+    });
+
+    return res.json({
+      payments: payments.map((payment) => ({
+        id: payment.id,
+        userId: payment.userId,
+        userEmail: payment.user?.email || null,
+        planName: payment.planName,
+        billingCycle: payment.billingCycle,
+        status: payment.status,
+        subscriptionId: payment.subscriptionId,
+        subscriptionStartDate: payment.subscriptionStartDate,
+        subscriptionEndDate: payment.subscriptionEndDate,
+        createdAt: payment.createdAt,
+      })),
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not load payments." });
   }
 });
 
