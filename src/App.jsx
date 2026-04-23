@@ -1,6 +1,9 @@
 import { useState, useCallback } from "react";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
+import { renderAsync } from "docx-preview";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 import DropZone from "./components/DropZone";
 import ProgressCard from "./components/ProgressCard";
 import "./App.css";
@@ -33,23 +36,66 @@ function normalizeFieldValue(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
-function normalizeDocxTextSpacing(xml) {
-  return xml.replace(/<w:t([^>]*)>([\s\S]*?)<\/w:t>/g, (_, attrs, text) => {
-    const normalized = text
-      .replace(/\u00A0/g, " ")
-      .replace(/[ \t]{2,}/g, " ")
-      .replace(/\s+([,.;:!?])/g, "$1")
-      .replace(/\(\s+/g, "(")
-      .replace(/\s+\)/g, ")");
-    return `<w:t${attrs}>${normalized}</w:t>`;
+async function renderDocxBlobToCanvas(docxBlob) {
+  const host = document.createElement("div");
+  host.style.position = "fixed";
+  host.style.left = "-99999px";
+  host.style.top = "0";
+  host.style.width = "1400px";
+  host.style.background = "#ffffff";
+  host.style.padding = "20px";
+  host.style.zIndex = "-1";
+  document.body.appendChild(host);
+
+  try {
+    const buffer = await docxBlob.arrayBuffer();
+    await renderAsync(buffer, host, undefined, {
+      inWrapper: true,
+      breakPages: false,
+      ignoreLastRenderedPageBreak: true,
+      useBase64URL: true,
+    });
+
+    const captureTarget = host.querySelector(".docx-wrapper") || host;
+    return await html2canvas(captureTarget, {
+      backgroundColor: "#ffffff",
+      scale: 2,
+      useCORS: true,
+      logging: false,
+    });
+  } finally {
+    document.body.removeChild(host);
+  }
+}
+
+async function convertDocxBlobToJpgBlob(docxBlob) {
+  const canvas = await renderDocxBlobToCanvas(docxBlob);
+  return await new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("Could not create JPG output."));
+        return;
+      }
+      resolve(blob);
+    }, "image/jpeg", 0.95);
   });
 }
 
-function normalizeDocxParagraphAlignment(xml) {
-  return xml.replace(
-    /<w:jc\b[^>]*w:val="(?:both|justify|distribute)"[^>]*\/?>/g,
-    '<w:jc w:val="left"/>'
-  );
+async function convertDocxBlobToPdfBlob(docxBlob) {
+  const canvas = await renderDocxBlobToCanvas(docxBlob);
+  const width = canvas.width;
+  const height = canvas.height;
+  const orientation = width > height ? "landscape" : "portrait";
+
+  const pdf = new jsPDF({
+    orientation,
+    unit: "px",
+    format: [width, height],
+    compress: true,
+  });
+
+  pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, width, height, undefined, "FAST");
+  return pdf.output("blob");
 }
 
 function triggerDownload(blobOrUrl, fileName) {
@@ -75,6 +121,7 @@ export default function App() {
   const [selectedCol, setSelectedCol] = useState("");
   const [placeholder, setPlaceholder] = useState("{{NAME}}");
   const [extraAttrs, setExtraAttrs] = useState([]);
+  const [downloadFormat, setDownloadFormat] = useState("docx");
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState("");
 
@@ -189,9 +236,6 @@ export default function App() {
           nextXml = attrResult.xml;
         }
 
-        nextXml = normalizeDocxParagraphAlignment(nextXml);
-        nextXml = normalizeDocxTextSpacing(nextXml);
-
         docZip.file(xmlName, nextXml);
       }
 
@@ -201,11 +245,23 @@ export default function App() {
         return;
       }
 
-      const blob = await docZip.generateAsync({ type: "blob" });
+      const docxBlob = await docZip.generateAsync({ type: "blob" });
       const safe =
         name.replace(/[^a-zA-Z0-9 _\-]/g, "").replace(/\s+/g, "_") ||
         "cert_" + (i + 1);
-      outZip.file(safe + ".docx", blob);
+
+      if (downloadFormat === "docx") {
+        outZip.file(safe + ".docx", docxBlob);
+      } else if (downloadFormat === "pdf") {
+        setProgress({ pct, msg: `Converting to PDF ${i + 1}/${records.length}: ${name}`, done: false });
+        const pdfBlob = await convertDocxBlobToPdfBlob(docxBlob);
+        outZip.file(safe + ".pdf", pdfBlob);
+      } else {
+        setProgress({ pct, msg: `Converting to JPG ${i + 1}/${records.length}: ${name}`, done: false });
+        const jpgBlob = await convertDocxBlobToJpgBlob(docxBlob);
+        outZip.file(safe + ".jpg", jpgBlob);
+      }
+
       await new Promise((r) => setTimeout(r, 0));
     }
 
@@ -217,7 +273,7 @@ export default function App() {
       done: true,
     });
 
-    triggerDownload(zipBlob, "certificates.zip");
+    triggerDownload(zipBlob, `certificates_${downloadFormat}.zip`);
   };
 
   return (
@@ -366,6 +422,22 @@ export default function App() {
             </div>
           )}
 
+          <div className="settings-row">
+            <div className="field">
+              <label htmlFor="download-format">Download format</label>
+              <select
+                id="download-format"
+                value={downloadFormat}
+                onChange={(e) => setDownloadFormat(e.target.value)}
+              >
+                <option value="docx">DOCX (.docx)</option>
+                <option value="pdf">PDF (.pdf)</option>
+                <option value="jpg">JPG (.jpg)</option>
+              </select>
+              <span className="field-hint">Choose output format for generated certificates</span>
+            </div>
+          </div>
+
           {names.length > 0 && (
             <div className="preview-pill">
               <span>{names.length} student{names.length !== 1 ? "s" : ""} —&nbsp;</span>
@@ -384,7 +456,7 @@ export default function App() {
             <polyline points="7 10 12 15 17 10"/>
             <line x1="12" y1="15" x2="12" y2="3"/>
           </svg>
-          Generate &amp; Download ZIP
+          Generate &amp; Download {downloadFormat.toUpperCase()} ZIP
         </button>
 
         {progress && <ProgressCard progress={progress} />}
