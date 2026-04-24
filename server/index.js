@@ -17,8 +17,11 @@ const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
 const razorpayWebhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
 const razorpayPlanId = process.env.RAZORPAY_PLAN_ID;
 const guestCookieName = "bulkcertify_guest_id";
-const trialLimit = 1;
+const guestTrialLimit = 1;
+const accountMonthlyTrialLimit = 2;
 const subscriptionAmountSettingKey = "SUBSCRIPTION_AMOUNT_INR";
+const subscriptionPlansSettingKey = "SUBSCRIPTION_PLANS_V1";
+const primarySubscriptionPlanId = "plan-pro-monthly";
 const defaultSubscriptionAmountInr = Math.max(1, Number(process.env.SUBSCRIPTION_AMOUNT_INR || 9) || 9);
 const runtimeSettingsCache = new Map();
 
@@ -95,6 +98,31 @@ function isAdminUser(user) {
   return !!(user.isAdmin || user.email === adminEmail);
 }
 
+function getMonthWindowStart(referenceDate = new Date()) {
+  return new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1, 0, 0, 0, 0);
+}
+
+async function getUserMonthlyConsumedCount(userId) {
+  if (!userId) return 0;
+  const monthStart = getMonthWindowStart();
+  return prisma.activityLog.count({
+    where: {
+      userId,
+      action: "USER_USAGE_CONSUMED",
+      createdAt: { gte: monthStart },
+    },
+  });
+}
+
+async function getUserMonthlyRemainingUses(user) {
+  if (!user || isAdminUser(user) || isActiveSubscriber(user)) {
+    return accountMonthlyTrialLimit;
+  }
+
+  const consumedThisMonth = await getUserMonthlyConsumedCount(user.id);
+  return Math.max(accountMonthlyTrialLimit - consumedThisMonth, 0);
+}
+
 function toAccountPayload(user) {
   const subscribed = isActiveSubscriber(user);
   const isAdmin = isAdminUser(user);
@@ -107,6 +135,27 @@ function toAccountPayload(user) {
     subscriptionEndDate: user.subscriptionEndDate,
     subscriptionId: user.subscriptionId,
     canGenerate: isAdmin || subscribed || user.trialUsageCount > 0,
+  };
+}
+
+async function toAccountPayloadWithMonthlyUsage(user) {
+  const subscribed = isActiveSubscriber(user);
+  const isAdmin = isAdminUser(user);
+
+  if (isAdmin || subscribed) {
+    return toAccountPayload(user);
+  }
+
+  const trialUsageCount = await getUserMonthlyRemainingUses(user);
+  return {
+    email: user.email,
+    isAdmin: false,
+    trialUsageCount,
+    isSubscribed: false,
+    subscriptionStartDate: user.subscriptionStartDate,
+    subscriptionEndDate: user.subscriptionEndDate,
+    subscriptionId: user.subscriptionId,
+    canGenerate: trialUsageCount > 0,
   };
 }
 
@@ -156,11 +205,11 @@ async function getOrCreateUser(req) {
     throw new Error("Unauthorized");
   }
 
-  // Normalize legacy trial counts so non-subscribed users never exceed the trial limit.
-  if (!isAdminUser(user) && !isActiveSubscriber(user) && (user.trialUsageCount || 0) > trialLimit) {
+  // Keep legacy column bounded for compatibility with existing admin views.
+  if (!isAdminUser(user) && !isActiveSubscriber(user) && (user.trialUsageCount || 0) > accountMonthlyTrialLimit) {
     user = await prisma.user.update({
       where: { id: user.id },
-      data: { trialUsageCount: trialLimit },
+      data: { trialUsageCount: accountMonthlyTrialLimit },
     });
   }
 
@@ -314,9 +363,263 @@ function getAppSettingDelegate() {
   return delegate;
 }
 
+function getAdminSettingDelegate() {
+  const delegate = prisma?.adminSetting;
+  if (!delegate) return null;
+  if (typeof delegate.findUnique !== "function") return null;
+  if (typeof delegate.upsert !== "function") return null;
+  return delegate;
+}
+
+function getAdminPlanDelegate() {
+  const delegate = prisma?.adminPlan;
+  if (!delegate) return null;
+  if (typeof delegate.findMany !== "function") return null;
+  if (typeof delegate.create !== "function") return null;
+  if (typeof delegate.update !== "function") return null;
+  if (typeof delegate.upsert !== "function") return null;
+  if (typeof delegate.deleteMany !== "function") return null;
+  return delegate;
+}
+
+function normalizePlanFeatures(value) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || "")
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+
+  const deduped = [];
+  for (const feature of source) {
+    const normalized = String(feature || "").trim();
+    if (!normalized) continue;
+    if (!deduped.includes(normalized)) deduped.push(normalized);
+  }
+  return deduped.slice(0, 12);
+}
+
+function normalizeBillingCycle(value) {
+  const cycle = String(value || "monthly").trim().toUpperCase();
+  if (cycle === "YEARLY" || cycle === "QUARTERLY") return cycle;
+  return "MONTHLY";
+}
+
+function buildDefaultPlans(amountInr) {
+  return [
+    {
+      id: "plan-pro-monthly",
+      name: "Pro Plan",
+      description: "Unlimited certificate generations with all export formats.",
+      priceInr: amountInr,
+      currency: "INR",
+      billingCycle: "MONTHLY",
+      isActive: true,
+      sortOrder: 1,
+      features: ["Unlimited generation runs", "DOCX, PDF, and JPG export", "Priority support"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  ];
+}
+
+function normalizePlanInput(input, fallbackAmountInr) {
+  const name = String(input?.name || "").trim();
+  if (!name) return null;
+
+  const priceInr = normalizeSubscriptionAmountInr(input?.priceInr ?? fallbackAmountInr);
+  if (!priceInr) return null;
+
+  return {
+    id: String(input?.id || generateDbId()),
+    name,
+    description: String(input?.description || "").trim().slice(0, 500),
+    priceInr,
+    currency: "INR",
+    billingCycle: normalizeBillingCycle(input?.billingCycle),
+    isActive: input?.isActive !== false,
+    sortOrder: Number.isFinite(Number(input?.sortOrder)) ? Math.max(0, Math.floor(Number(input.sortOrder))) : 0,
+    features: normalizePlanFeatures(input?.features),
+    createdAt: String(input?.createdAt || new Date().toISOString()),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function sortPlans(plans) {
+  return [...plans].sort((a, b) => {
+    const aOrder = Number(a?.sortOrder || 0);
+    const bOrder = Number(b?.sortOrder || 0);
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return String(a?.name || "").localeCompare(String(b?.name || ""));
+  });
+}
+
+async function getSubscriptionPlans({ includeInactive = false } = {}) {
+  const fallbackAmountInr = await getSubscriptionAmountInr();
+
+  const parsePlans = (rawValue) => {
+    try {
+      const parsed = JSON.parse(String(rawValue || "[]"));
+      if (!Array.isArray(parsed)) return [];
+
+      const normalized = parsed
+        .map((entry) => normalizePlanInput(entry, fallbackAmountInr))
+        .filter(Boolean);
+
+      return normalized.length ? normalized : buildDefaultPlans(fallbackAmountInr);
+    } catch {
+      return buildDefaultPlans(fallbackAmountInr);
+    }
+  };
+
+  const cached = runtimeSettingsCache.get(subscriptionPlansSettingKey);
+  if (cached) {
+    const plans = parsePlans(cached);
+    return includeInactive ? sortPlans(plans) : sortPlans(plans.filter((plan) => plan.isActive));
+  }
+
+  const adminPlan = getAdminPlanDelegate();
+  if (adminPlan) {
+    const rows = await adminPlan.findMany({
+      where: includeInactive ? undefined : { isActive: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    });
+
+    if (rows.length) {
+      return sortPlans(
+        rows
+          .map((row) =>
+            normalizePlanInput(
+              {
+                id: row.id,
+                name: row.name,
+                description: row.description,
+                priceInr: row.priceInr,
+                currency: row.currency,
+                billingCycle: row.billingCycle,
+                isActive: row.isActive,
+                sortOrder: row.sortOrder,
+                features: Array.isArray(row.features) ? row.features : [],
+                createdAt: row.createdAt,
+                updatedAt: row.updatedAt,
+              },
+              fallbackAmountInr
+            )
+          )
+          .filter(Boolean)
+      );
+    }
+  }
+
+  const appSetting = getAppSettingDelegate();
+  if (!appSetting) {
+    const defaults = buildDefaultPlans(fallbackAmountInr);
+    return includeInactive ? defaults : defaults.filter((plan) => plan.isActive);
+  }
+
+  const setting = await appSetting.findUnique({
+    where: { key: subscriptionPlansSettingKey },
+    select: { value: true },
+  });
+
+  if (setting?.value) {
+    runtimeSettingsCache.set(subscriptionPlansSettingKey, setting.value);
+  }
+
+  const plans = parsePlans(setting?.value);
+  return includeInactive ? sortPlans(plans) : sortPlans(plans.filter((plan) => plan.isActive));
+}
+
+async function setSubscriptionPlans(plans) {
+  const normalizedPlans = sortPlans(
+    plans
+      .map((entry) => normalizePlanInput(entry, defaultSubscriptionAmountInr))
+      .filter(Boolean)
+  );
+
+  if (!normalizedPlans.length) {
+    throw new Error("At least one valid plan is required.");
+  }
+
+  const serialized = JSON.stringify(normalizedPlans);
+  runtimeSettingsCache.set(subscriptionPlansSettingKey, serialized);
+
+  const adminPlan = getAdminPlanDelegate();
+  if (adminPlan) {
+    const keepIds = normalizedPlans.map((plan) => plan.id);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.adminPlan.deleteMany({
+        where: {
+          id: {
+            notIn: keepIds,
+          },
+        },
+      });
+
+      for (const plan of normalizedPlans) {
+        await tx.adminPlan.upsert({
+          where: { id: plan.id },
+          create: {
+            id: plan.id,
+            name: plan.name,
+            description: plan.description,
+            priceInr: plan.priceInr,
+            currency: "INR",
+            billingCycle: plan.billingCycle,
+            isActive: plan.isActive,
+            sortOrder: plan.sortOrder,
+            features: plan.features,
+          },
+          update: {
+            name: plan.name,
+            description: plan.description,
+            priceInr: plan.priceInr,
+            currency: "INR",
+            billingCycle: plan.billingCycle,
+            isActive: plan.isActive,
+            sortOrder: plan.sortOrder,
+            features: plan.features,
+          },
+        });
+      }
+    });
+  }
+
+  const appSetting = getAppSettingDelegate();
+  if (appSetting) {
+    await appSetting.upsert({
+      where: { key: subscriptionPlansSettingKey },
+      create: { key: subscriptionPlansSettingKey, value: serialized },
+      update: { value: serialized },
+    });
+  }
+
+  const firstActive = normalizedPlans.find((plan) => plan.isActive);
+  if (firstActive?.priceInr) {
+    await setSubscriptionAmountInr(firstActive.priceInr);
+  }
+
+  return normalizedPlans;
+}
+
 async function getSubscriptionAmountInr() {
   const fromCache = normalizeSubscriptionAmountInr(runtimeSettingsCache.get(subscriptionAmountSettingKey));
   if (fromCache) return fromCache;
+
+  const adminSetting = getAdminSettingDelegate();
+  if (adminSetting) {
+    const adminStored = await adminSetting.findUnique({
+      where: { key: subscriptionAmountSettingKey },
+      select: { value: true },
+    });
+
+    const fromAdminSetting = normalizeSubscriptionAmountInr(adminStored?.value);
+    if (fromAdminSetting) {
+      runtimeSettingsCache.set(subscriptionAmountSettingKey, String(fromAdminSetting));
+      return fromAdminSetting;
+    }
+  }
 
   const appSetting = getAppSettingDelegate();
   if (!appSetting) {
@@ -335,8 +638,71 @@ async function getSubscriptionAmountInr() {
   return fromDb || defaultSubscriptionAmountInr;
 }
 
+async function syncPrimarySubscriptionPlan(amountInr) {
+  const adminPlan = getAdminPlanDelegate();
+  if (!adminPlan) {
+    return null;
+  }
+
+  const defaultPlan = buildDefaultPlans(amountInr)[0];
+  const existing = await adminPlan.findUnique({
+    where: { id: primarySubscriptionPlanId },
+  });
+
+  const nextPlan = {
+    ...defaultPlan,
+    ...(existing || {}),
+    id: primarySubscriptionPlanId,
+    priceInr: amountInr,
+    currency: "INR",
+  };
+
+  await adminPlan.upsert({
+    where: { id: primarySubscriptionPlanId },
+    create: {
+      id: primarySubscriptionPlanId,
+      name: nextPlan.name,
+      description: nextPlan.description,
+      priceInr: nextPlan.priceInr,
+      currency: nextPlan.currency,
+      billingCycle: nextPlan.billingCycle,
+      isActive: nextPlan.isActive,
+      sortOrder: nextPlan.sortOrder,
+      features: nextPlan.features,
+    },
+    update: {
+      name: nextPlan.name,
+      description: nextPlan.description,
+      priceInr: nextPlan.priceInr,
+      currency: nextPlan.currency,
+      billingCycle: nextPlan.billingCycle,
+      isActive: nextPlan.isActive,
+      sortOrder: nextPlan.sortOrder,
+      features: nextPlan.features,
+    },
+  });
+
+  return nextPlan;
+}
+
 async function setSubscriptionAmountInr(amountInr) {
   runtimeSettingsCache.set(subscriptionAmountSettingKey, String(amountInr));
+
+  await syncPrimarySubscriptionPlan(amountInr);
+
+  const adminSetting = getAdminSettingDelegate();
+  if (adminSetting) {
+    await adminSetting.upsert({
+      where: { key: subscriptionAmountSettingKey },
+      create: {
+        key: subscriptionAmountSettingKey,
+        value: String(amountInr),
+      },
+      update: {
+        value: String(amountInr),
+      },
+    });
+  }
 
   const appSetting = getAppSettingDelegate();
   if (!appSetting) {
@@ -367,6 +733,18 @@ async function getOrCreateRazorpayPlanIdForAmount(amountInr) {
   const cachedPlanFromMemory = runtimeSettingsCache.get(planCacheKey);
   if (cachedPlanFromMemory) {
     return cachedPlanFromMemory;
+  }
+
+  const adminSetting = getAdminSettingDelegate();
+  if (adminSetting) {
+    const cachedPlanFromAdminSetting = await adminSetting.findUnique({
+      where: { key: planCacheKey },
+      select: { value: true },
+    });
+    if (cachedPlanFromAdminSetting?.value) {
+      runtimeSettingsCache.set(planCacheKey, cachedPlanFromAdminSetting.value);
+      return cachedPlanFromAdminSetting.value;
+    }
   }
 
   const appSetting = getAppSettingDelegate();
@@ -404,6 +782,19 @@ async function getOrCreateRazorpayPlanIdForAmount(amountInr) {
   const createdPlanId = String(plan.id);
   runtimeSettingsCache.set(planCacheKey, createdPlanId);
 
+  if (adminSetting) {
+    await adminSetting.upsert({
+      where: { key: planCacheKey },
+      create: {
+        key: planCacheKey,
+        value: createdPlanId,
+      },
+      update: {
+        value: createdPlanId,
+      },
+    });
+  }
+
   if (appSetting) {
     await appSetting.upsert({
       where: { key: planCacheKey },
@@ -438,15 +829,15 @@ async function getOrCreateGuestUsage(req, res) {
   const cookieId = ensureGuestCookie(req, res);
   let usage = await prisma.guestUsage.upsert({
     where: { cookieId },
-    create: { id: generateDbId(), cookieId, remainingUses: trialLimit },
+    create: { id: generateDbId(), cookieId, remainingUses: guestTrialLimit },
     update: {},
   });
 
   // Normalize legacy guest trial counts so guests never exceed the trial limit.
-  if ((usage.remainingUses || 0) > trialLimit) {
+  if ((usage.remainingUses || 0) > guestTrialLimit) {
     usage = await prisma.guestUsage.update({
       where: { id: usage.id },
-      data: { remainingUses: trialLimit },
+      data: { remainingUses: guestTrialLimit },
     });
   }
 
@@ -512,6 +903,15 @@ app.get("/api/subscription-settings", async (_req, res) => {
   }
 });
 
+app.get("/api/plans", async (_req, res) => {
+  try {
+    const plans = await getSubscriptionPlans({ includeInactive: false });
+    return res.json({ plans });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not load plans." });
+  }
+});
+
 app.post("/api/auth/signup", async (req, res) => {
   try {
     const identifier = normalizeAuthIdentifier(req.body?.email || req.body?.username || "");
@@ -549,7 +949,7 @@ app.post("/api/auth/signup", async (req, res) => {
         targetId: upgradedUser.id,
       });
 
-      return res.status(200).json({ account: toAccountPayload(upgradedUser) });
+      return res.status(200).json({ account: await toAccountPayloadWithMonthlyUsage(upgradedUser) });
     }
 
     const user = await prisma.user.create({
@@ -558,7 +958,7 @@ app.post("/api/auth/signup", async (req, res) => {
         email: identifier,
         passwordHash: hashPassword(password),
         isAdmin: identifier === adminEmail,
-        trialUsageCount: trialLimit,
+        trialUsageCount: accountMonthlyTrialLimit,
         isSubscribed: false,
       },
     });
@@ -571,7 +971,7 @@ app.post("/api/auth/signup", async (req, res) => {
       details: { isAdmin: user.isAdmin },
     });
 
-    return res.status(201).json({ account: toAccountPayload(user) });
+    return res.status(201).json({ account: await toAccountPayloadWithMonthlyUsage(user) });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Could not create account." });
   }
@@ -616,7 +1016,7 @@ app.post("/api/auth/login", async (req, res) => {
       targetId: user.id,
     });
 
-    return res.json({ account: toAccountPayload(user) });
+    return res.json({ account: await toAccountPayloadWithMonthlyUsage(user) });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Could not log in." });
   }
@@ -645,7 +1045,7 @@ app.post("/api/guest/consume", async (req, res) => {
     if (decremented.count === 0) {
       return res.status(402).json({
         allowed: false,
-        message: `Your ${trialLimit} free guest use${trialLimit === 1 ? "" : "s"} is finished. Please sign in to continue.`,
+        message: `Your ${guestTrialLimit} free guest use${guestTrialLimit === 1 ? "" : "s"} is finished. Please sign in to continue.`,
       });
     }
 
@@ -671,7 +1071,7 @@ app.post("/api/guest/consume", async (req, res) => {
 app.get("/api/me", requireLocalAuth, async (req, res) => {
   try {
     const user = await getOrCreateUser(req);
-    res.json(toAccountPayload(user));
+    res.json(await toAccountPayloadWithMonthlyUsage(user));
   } catch (err) {
     res.status(500).json({ error: err.message || "Failed to load account." });
   }
@@ -681,6 +1081,7 @@ app.get("/api/profile", requireLocalAuth, async (req, res) => {
   try {
     const user = await getOrCreateUser(req);
     const subscribed = isActiveSubscriber(user);
+    const trialUsageCount = await getUserMonthlyRemainingUses(user);
 
     const plans = await prisma.planHistory.findMany({
       where: { userId: user.id },
@@ -699,7 +1100,7 @@ app.get("/api/profile", requireLocalAuth, async (req, res) => {
       profile: {
         id: user.id,
         email: user.email,
-        trialUsageCount: user.trialUsageCount,
+        trialUsageCount,
         isSubscribed: subscribed,
         currentPlan: currentPlan ? toPlanDto(currentPlan) : null,
         previousPlans,
@@ -734,44 +1135,35 @@ app.post("/api/usage/consume", requireLocalAuth, async (req, res) => {
       });
     }
 
-    const decremented = await prisma.user.updateMany({
-      where: {
-        id: user.id,
-        trialUsageCount: { gt: 0 },
-      },
-      data: {
-        trialUsageCount: { decrement: 1 },
-      },
-    });
+    const consumedThisMonth = await getUserMonthlyConsumedCount(user.id);
+    const remainingBeforeConsume = Math.max(accountMonthlyTrialLimit - consumedThisMonth, 0);
 
-    if (decremented.count === 0) {
+    if (remainingBeforeConsume <= 0) {
       return res.status(402).json({
         allowed: false,
         reason: "TRIAL_EXHAUSTED",
-        message: "Your free trial is over. Upgrade to continue generating certificates.",
+        message: "Your monthly free uses are over. You will get 2 free uses again next month.",
       });
     }
 
-    const refreshed = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { trialUsageCount: true, isSubscribed: true },
-    });
+    const remainingAfterConsume = Math.max(remainingBeforeConsume - 1, 0);
 
     await logActivity(req, {
       action: "USER_USAGE_CONSUMED",
       targetType: "USER",
       targetId: user.id,
       details: {
-        trialUsageCount: refreshed?.trialUsageCount ?? 0,
+        trialUsageCount: remainingAfterConsume,
+        monthStart: getMonthWindowStart().toISOString(),
       },
     });
 
     return res.json({
       allowed: true,
-      trialUsageCount: refreshed?.trialUsageCount ?? 0,
-      isSubscribed: refreshed?.isSubscribed ?? false,
+      trialUsageCount: remainingAfterConsume,
+      isSubscribed: false,
       isAdmin: false,
-      canGenerate: (refreshed?.isSubscribed ?? false) || (refreshed?.trialUsageCount ?? 0) > 0,
+      canGenerate: remainingAfterConsume > 0,
     });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Could not validate usage." });
@@ -785,7 +1177,23 @@ app.post("/api/razorpay/create-subscription", requireLocalAuth, async (req, res)
 
   try {
     const user = await getOrCreateUser(req);
-    const amountInr = await getSubscriptionAmountInr();
+    const requestedPlanId = String(req.body?.planId || "").trim();
+    let amountInr = await getSubscriptionAmountInr();
+
+    if (requestedPlanId) {
+      const activePlans = await getSubscriptionPlans({ includeInactive: false });
+      const selectedPlan = activePlans.find((plan) => plan.id === requestedPlanId);
+      if (!selectedPlan) {
+        return res.status(400).json({ error: "Selected plan is not available." });
+      }
+      amountInr = normalizeSubscriptionAmountInr(selectedPlan.priceInr) || amountInr;
+    } else {
+      const requestedAmount = normalizeSubscriptionAmountInr(req.body?.amountInr);
+      if (requestedAmount) {
+        amountInr = requestedAmount;
+      }
+    }
+
     let planId = await getOrCreateRazorpayPlanIdForAmount(amountInr);
     if (!planId && razorpayPlanId) {
       planId = razorpayPlanId;
@@ -822,6 +1230,7 @@ app.post("/api/razorpay/create-subscription", requireLocalAuth, async (req, res)
       subscriptionId: String(subscription.id),
       currency: subscription.currency || "INR",
       amountInr,
+      planId: requestedPlanId || null,
       email: user.email,
     });
   } catch (err) {
@@ -880,7 +1289,7 @@ app.post("/api/razorpay/verify-payment", requireLocalAuth, async (req, res) => {
     return res.json({
       account: {
         email: refreshed?.email || user.email,
-        trialUsageCount: refreshed?.trialUsageCount ?? trialLimit,
+        trialUsageCount: refreshed?.trialUsageCount ?? accountMonthlyTrialLimit,
         isSubscribed: !!refreshed?.isSubscribed,
         subscriptionStartDate: refreshed?.subscriptionStartDate,
         subscriptionEndDate: refreshed?.subscriptionEndDate,
@@ -909,19 +1318,10 @@ app.get("/api/admin/overview", requireLocalAuth, requireAdmin, async (req, res) 
       prisma.guestUsage.count(),
     ]);
 
-    const users = await prisma.user.findMany({
-      select: { trialUsageCount: true, isSubscribed: true },
-    });
-    const guests = await prisma.guestUsage.findMany({
-      select: { remainingUses: true },
-    });
-
-    const totalUserTrialConsumed = users.reduce((sum, user) => {
-      return sum + Math.max(trialLimit - (user.trialUsageCount || 0), 0);
-    }, 0);
-    const totalGuestTrialConsumed = guests.reduce((sum, guest) => {
-      return sum + Math.max(trialLimit - (guest.remainingUses || 0), 0);
-    }, 0);
+    const [totalUserTrialConsumed, totalGuestTrialConsumed] = await Promise.all([
+      prisma.activityLog.count({ where: { action: "USER_USAGE_CONSUMED" } }),
+      prisma.activityLog.count({ where: { action: "GUEST_USAGE_CONSUMED" } }),
+    ]);
 
     const totalPayments = await prisma.planHistory.count();
     const activePlans = await prisma.planHistory.count({ where: { status: "ACTIVE" } });
@@ -981,6 +1381,110 @@ app.patch("/api/admin/subscription-settings", requireLocalAuth, requireAdmin, as
     });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Could not update subscription settings." });
+  }
+});
+
+app.get("/api/admin/plans", requireLocalAuth, requireAdmin, async (_req, res) => {
+  try {
+    const plans = await getSubscriptionPlans({ includeInactive: true });
+    return res.json({ plans });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not load plans." });
+  }
+});
+
+app.post("/api/admin/plans", requireLocalAuth, requireAdmin, async (req, res) => {
+  try {
+    const existingPlans = await getSubscriptionPlans({ includeInactive: true });
+    const fallbackAmount = await getSubscriptionAmountInr();
+    const plan = normalizePlanInput(req.body || {}, fallbackAmount);
+
+    if (!plan) {
+      return res.status(400).json({ error: "Plan name and valid INR amount are required." });
+    }
+
+    const updatedPlans = await setSubscriptionPlans([...existingPlans, plan]);
+
+    await logActivity(req, {
+      action: "ADMIN_PLAN_CREATED",
+      email: req.localAuthEmail,
+      targetType: "PLAN",
+      targetId: plan.id,
+      details: { name: plan.name, priceInr: plan.priceInr },
+    });
+
+    return res.status(201).json({ plans: updatedPlans, plan });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not create plan." });
+  }
+});
+
+app.patch("/api/admin/plans/:id", requireLocalAuth, requireAdmin, async (req, res) => {
+  try {
+    const planId = String(req.params.id || "").trim();
+    if (!planId) {
+      return res.status(400).json({ error: "Plan id is required." });
+    }
+
+    const existingPlans = await getSubscriptionPlans({ includeInactive: true });
+    const existingPlan = existingPlans.find((entry) => entry.id === planId);
+    if (!existingPlan) {
+      return res.status(404).json({ error: "Plan not found." });
+    }
+
+    const merged = normalizePlanInput({ ...existingPlan, ...(req.body || {}), id: planId, createdAt: existingPlan.createdAt }, existingPlan.priceInr);
+    if (!merged) {
+      return res.status(400).json({ error: "Invalid plan payload." });
+    }
+
+    const nextPlans = existingPlans.map((entry) => (entry.id === planId ? merged : entry));
+    const updatedPlans = await setSubscriptionPlans(nextPlans);
+
+    await logActivity(req, {
+      action: "ADMIN_PLAN_UPDATED",
+      email: req.localAuthEmail,
+      targetType: "PLAN",
+      targetId: planId,
+      details: { name: merged.name, priceInr: merged.priceInr, isActive: merged.isActive },
+    });
+
+    return res.json({ plans: updatedPlans, plan: merged });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not update plan." });
+  }
+});
+
+app.delete("/api/admin/plans/:id", requireLocalAuth, requireAdmin, async (req, res) => {
+  try {
+    const planId = String(req.params.id || "").trim();
+    if (!planId) {
+      return res.status(400).json({ error: "Plan id is required." });
+    }
+
+    const existingPlans = await getSubscriptionPlans({ includeInactive: true });
+    const target = existingPlans.find((entry) => entry.id === planId);
+    if (!target) {
+      return res.status(404).json({ error: "Plan not found." });
+    }
+
+    const nextPlans = existingPlans.filter((entry) => entry.id !== planId);
+    if (!nextPlans.length) {
+      return res.status(400).json({ error: "At least one plan must remain." });
+    }
+
+    const updatedPlans = await setSubscriptionPlans(nextPlans);
+
+    await logActivity(req, {
+      action: "ADMIN_PLAN_DELETED",
+      email: req.localAuthEmail,
+      targetType: "PLAN",
+      targetId: planId,
+      details: { name: target.name },
+    });
+
+    return res.json({ plans: updatedPlans });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not delete plan." });
   }
 });
 
@@ -1096,9 +1600,19 @@ app.patch("/api/admin/clients/:id", requireLocalAuth, requireAdmin, async (req, 
 app.post("/api/admin/clients/:id/reset-trial", requireLocalAuth, requireAdmin, async (req, res) => {
   try {
     const userId = String(req.params.id || "");
+    const monthStart = getMonthWindowStart();
+
+    await prisma.activityLog.deleteMany({
+      where: {
+        userId,
+        action: "USER_USAGE_CONSUMED",
+        createdAt: { gte: monthStart },
+      },
+    });
+
     const updated = await prisma.user.update({
       where: { id: userId },
-      data: { trialUsageCount: trialLimit },
+      data: { trialUsageCount: accountMonthlyTrialLimit },
       select: {
         id: true,
         email: true,
@@ -1116,6 +1630,9 @@ app.post("/api/admin/clients/:id/reset-trial", requireLocalAuth, requireAdmin, a
       email: req.localAuthEmail,
       targetType: "USER",
       targetId: userId,
+      details: {
+        monthStart: monthStart.toISOString(),
+      },
     });
 
     return res.json({ client: updated });

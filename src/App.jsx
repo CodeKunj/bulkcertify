@@ -11,6 +11,7 @@ import UpgradePage from "./components/UpgradePage";
 import PolicyPage from "./components/PolicyPage";
 import ProfilePage from "./components/ProfilePage";
 import AdminPage from "./components/AdminPage";
+import AdminPlansPage from "./components/AdminPlansPage";
 import "./App.css";
 import sampleDocxUrl from "../Sample_certificate.docx";
 
@@ -169,8 +170,13 @@ export default function App() {
   const [adminClients, setAdminClients] = useState([]);
   const [adminPayments, setAdminPayments] = useState([]);
   const [adminActivities, setAdminActivities] = useState([]);
+  const [adminPlans, setAdminPlans] = useState([]);
+  const [adminPlansLoading, setAdminPlansLoading] = useState(false);
+  const [adminPlansError, setAdminPlansError] = useState("");
+  const [adminPlanBusyId, setAdminPlanBusyId] = useState(null);
   const [adminClientBusyId, setAdminClientBusyId] = useState(null);
   const [adminSearch, setAdminSearch] = useState("");
+  const [publicPlans, setPublicPlans] = useState([]);
   const [subscriptionAmountInr, setSubscriptionAmountInr] = useState(9);
   const [adminSubscriptionBusy, setAdminSubscriptionBusy] = useState(false);
   const [error, setError] = useState("");
@@ -335,9 +341,22 @@ export default function App() {
     }
   }, [publicFetch]);
 
+  const loadPublicPlans = useCallback(async () => {
+    try {
+      const res = await publicFetch("/api/plans");
+      const body = await res.json();
+      if (!res.ok) return;
+
+      setPublicPlans(Array.isArray(body?.plans) ? body.plans : []);
+    } catch {
+      // Keep the upgrade screen usable even if plan loading fails.
+    }
+  }, [publicFetch]);
+
   useEffect(() => {
     loadSubscriptionSettings();
-  }, [loadSubscriptionSettings]);
+    loadPublicPlans();
+  }, [loadPublicPlans, loadSubscriptionSettings]);
 
   const signIn = async (event) => {
     event.preventDefault();
@@ -440,10 +459,33 @@ export default function App() {
     setAdminClients([]);
     setAdminPayments([]);
     setAdminActivities([]);
+    setAdminPlans([]);
     setAdminSearch("");
     setAdminError("");
+    setAdminPlansError("");
     setError("");
   };
+
+  const loadAdminPlans = useCallback(async () => {
+    if (!isAuthenticated) {
+      setAdminPlansError("Please sign in first.");
+      return;
+    }
+
+    setAdminPlansLoading(true);
+    setAdminPlansError("");
+    try {
+      const res = await authedFetch("/api/admin/plans");
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Could not load plans.");
+
+      setAdminPlans(body.plans || []);
+    } catch (err) {
+      setAdminPlansError(err.message || "Could not load plans.");
+    } finally {
+      setAdminPlansLoading(false);
+    }
+  }, [authedFetch, isAuthenticated]);
 
   const loadAdminData = useCallback(async (searchValue = adminSearch) => {
     if (!isAuthenticated) {
@@ -456,20 +498,22 @@ export default function App() {
     try {
       const query = searchValue.trim() ? `?search=${encodeURIComponent(searchValue.trim())}` : "";
 
-      const [overviewRes, clientsRes, paymentsRes, activitiesRes, subscriptionSettingsRes] = await Promise.all([
+      const [overviewRes, clientsRes, paymentsRes, activitiesRes, subscriptionSettingsRes, plansRes] = await Promise.all([
         authedFetch("/api/admin/overview"),
         authedFetch(`/api/admin/clients${query}`),
         authedFetch("/api/admin/payments?limit=100"),
         authedFetch("/api/admin/activities?limit=80"),
         authedFetch("/api/admin/subscription-settings"),
+        authedFetch("/api/admin/plans"),
       ]);
 
-      const [overviewBody, clientsBody, paymentsBody, activitiesBody, subscriptionSettingsBody] = await Promise.all([
+      const [overviewBody, clientsBody, paymentsBody, activitiesBody, subscriptionSettingsBody, plansBody] = await Promise.all([
         overviewRes.json(),
         clientsRes.json(),
         paymentsRes.json(),
         activitiesRes.json(),
         subscriptionSettingsRes.json(),
+        plansRes.json(),
       ]);
 
       if (!overviewRes.ok) throw new Error(overviewBody.error || "Failed to load admin overview.");
@@ -477,11 +521,13 @@ export default function App() {
       if (!paymentsRes.ok) throw new Error(paymentsBody.error || "Failed to load payments.");
       if (!activitiesRes.ok) throw new Error(activitiesBody.error || "Failed to load activities.");
       if (!subscriptionSettingsRes.ok) throw new Error(subscriptionSettingsBody.error || "Failed to load subscription settings.");
+      if (!plansRes.ok) throw new Error(plansBody.error || "Failed to load plans.");
 
       setAdminOverview(overviewBody.overview || {});
       setAdminClients(clientsBody.clients || []);
       setAdminPayments(paymentsBody.payments || []);
       setAdminActivities(activitiesBody.activities || []);
+      setAdminPlans(plansBody.plans || []);
       if (Number.isFinite(Number(subscriptionSettingsBody?.amountInr))) {
         setSubscriptionAmountInr(Math.floor(Number(subscriptionSettingsBody.amountInr)));
       }
@@ -499,6 +545,15 @@ export default function App() {
     }
     setScreen("admin");
     await loadAdminData("");
+  };
+
+  const openAdminPlans = async () => {
+    if (!account?.isAdmin) {
+      setError("Admin access only.");
+      return;
+    }
+    setScreen("admin-plans");
+    await loadAdminPlans();
   };
 
   const updateAdminSearch = async (value) => {
@@ -674,10 +729,100 @@ export default function App() {
         setSubscriptionAmountInr(Math.floor(parsedAmount));
       }
       await loadAdminData(adminSearch);
+      await loadAdminPlans();
     } catch (err) {
       setAdminError(err.message || "Could not update subscription amount.");
     } finally {
       setAdminSubscriptionBusy(false);
+    }
+  };
+
+  const createAdminPlan = async (payload) => {
+    setAdminPlansError("");
+    setAdminPlanBusyId("new");
+    try {
+      const res = await authedFetch("/api/admin/plans", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Could not create plan.");
+
+      setAdminPlans(body.plans || []);
+      await loadSubscriptionSettings();
+    } catch (err) {
+      setAdminPlansError(err.message || "Could not create plan.");
+    } finally {
+      setAdminPlanBusyId(null);
+    }
+  };
+
+  const editAdminPlan = async (plan) => {
+    const nextName = window.prompt("Plan name", plan.name || "");
+    if (nextName === null) return;
+
+    const nextPrice = window.prompt("Price in INR", String(plan.priceInr || 1));
+    if (nextPrice === null) return;
+
+    const nextBillingCycle = window.prompt("Billing cycle (MONTHLY / QUARTERLY / YEARLY)", String(plan.billingCycle || "MONTHLY"));
+    if (nextBillingCycle === null) return;
+
+    const nextDescription = window.prompt("Description", String(plan.description || ""));
+    if (nextDescription === null) return;
+
+    const nextFeatures = window.prompt(
+      "Features (comma-separated)",
+      Array.isArray(plan.features) ? plan.features.join(", ") : ""
+    );
+    if (nextFeatures === null) return;
+
+    const isActive = window.confirm("Keep this plan active? Click Cancel to mark inactive.");
+
+    setAdminPlansError("");
+    setAdminPlanBusyId(plan.id);
+    try {
+      const res = await authedFetch(`/api/admin/plans/${plan.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: String(nextName || "").trim(),
+          priceInr: Number(nextPrice),
+          billingCycle: String(nextBillingCycle || "").trim().toUpperCase(),
+          description: String(nextDescription || "").trim(),
+          features: String(nextFeatures || ""),
+          isActive,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Could not update plan.");
+
+      setAdminPlans(body.plans || []);
+      await loadSubscriptionSettings();
+    } catch (err) {
+      setAdminPlansError(err.message || "Could not update plan.");
+    } finally {
+      setAdminPlanBusyId(null);
+    }
+  };
+
+  const deleteAdminPlan = async (plan) => {
+    const confirmed = window.confirm(`Delete plan ${plan.name}?`);
+    if (!confirmed) return;
+
+    setAdminPlansError("");
+    setAdminPlanBusyId(plan.id);
+    try {
+      const res = await authedFetch(`/api/admin/plans/${plan.id}`, {
+        method: "DELETE",
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Could not delete plan.");
+
+      setAdminPlans(body.plans || []);
+      await loadSubscriptionSettings();
+    } catch (err) {
+      setAdminPlansError(err.message || "Could not delete plan.");
+    } finally {
+      setAdminPlanBusyId(null);
     }
   };
 
@@ -741,7 +886,7 @@ export default function App() {
     triggerDownload(sampleDocxUrl, "Sample_certificate.docx");
   };
 
-  const startRazorpayCheckout = async () => {
+  const startRazorpayCheckout = async (plan) => {
     if (!isAuthenticated) {
       setError("Please sign in before purchasing a subscription.");
       return;
@@ -750,8 +895,13 @@ export default function App() {
     setError("");
     setBillingBusy(true);
     try {
+      const selectedPlan = plan && typeof plan === "object" ? plan : null;
       const res = await authedFetch("/api/razorpay/create-subscription", {
         method: "POST",
+        body: JSON.stringify({
+          planId: selectedPlan?.id || null,
+          amountInr: selectedPlan?.priceInr || null,
+        }),
       });
       const body = await res.json();
 
@@ -1020,6 +1170,7 @@ export default function App() {
         billingBusy={billingBusy}
         accountLoading={accountLoading}
         accountUsesLeft={accountUsesLeft}
+        plans={publicPlans}
         subscriptionAmountInr={subscriptionAmountInr}
         startRazorpayCheckout={startRazorpayCheckout}
         onBack={closeUpgradePage}
@@ -1054,6 +1205,7 @@ export default function App() {
         clients={adminClients}
         payments={adminPayments}
         activities={adminActivities}
+        plans={adminPlans}
         subscriptionAmountInr={subscriptionAmountInr}
         subscriptionAmountBusy={adminSubscriptionBusy}
         clientBusyId={adminClientBusyId}
@@ -1067,6 +1219,23 @@ export default function App() {
         onEditUsername={editClientUsername}
         onEditPassword={editClientPassword}
         onEditSubscriptionAmount={editSubscriptionAmount}
+        onOpenPlanManager={openAdminPlans}
+      />
+    );
+  }
+
+  if (screen === "admin-plans") {
+    return (
+      <AdminPlansPage
+        loading={adminPlansLoading}
+        busyId={adminPlanBusyId}
+        error={adminPlansError}
+        plans={adminPlans}
+        onBack={() => setScreen("admin")}
+        onRefresh={loadAdminPlans}
+        onCreatePlan={createAdminPlan}
+        onEditPlan={editAdminPlan}
+        onDeletePlan={deleteAdminPlan}
       />
     );
   }

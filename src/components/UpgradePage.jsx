@@ -4,6 +4,7 @@ export default function UpgradePage({
   billingBusy,
   accountLoading,
   accountUsesLeft,
+  plans,
   subscriptionAmountInr,
   startRazorpayCheckout,
   onBack,
@@ -22,13 +23,20 @@ export default function UpgradePage({
 
       <main className="gate-shell upgrade-shell">
         <section className="gate-copy">
-          <div className="badge">
-            <span className="badge-dot" />
-            Free Uses Finished
+          <div className="upgrade-heading-row">
+            <div>
+              <div className="badge">
+                <span className="badge-dot" />
+                Free Uses Finished
+              </div>
+              <h1>Upgrade to keep generating</h1>
+            </div>
+            <button type="button" className="ghost-link" onClick={onBack}>
+              Back
+            </button>
           </div>
-          <h1>Upgrade to keep generating</h1>
           <p className="sub gate-sub">
-            You have used your 1 free run. Move to Pro for unlimited certificate generation and the full export set.
+            You have used your available free uses. Signed-in accounts get 2 free uses every month. Move to Pro for unlimited certificate generation and the full export set.
           </p>
 
           <div className="gate-points">
@@ -45,78 +53,60 @@ export default function UpgradePage({
               <span>Your account stays connected to the same generator flow.</span>
             </div>
           </div>
-        </section>
 
-        <section className="gate-card upgrade-card">
-          <button type="button" className="ghost-link" onClick={onBack}>
-            Back
-          </button>
-
-          <div className="pricing-head">
-            <h3>Pro Plan</h3>
-            <p>Unlimited certificate generations with all export formats.</p>
+          <div className="gate-muted upgrade-plan-intro">
+            Choose a plan below. Payment starts from the button inside each plan card.
           </div>
-          <div className="pricing-price upgrade-price">
-            <strong>₹{Math.max(Number(subscriptionAmountInr || 0), 1)}</strong>
-            <span>/month</span>
-          </div>
-          <div className="gate-muted">Charged in INR via Razorpay.</div>
-          <ul className="pricing-list upgrade-list">
-            <li>Unlimited generation runs</li>
-            <li>DOCX, PDF, and JPG export</li>
-            <li>Priority support</li>
-          </ul>
 
-          {isAuthenticated ? (
-            <div className="upgrade-actions">
-              <button
-                type="button"
-                className="account-btn"
-                onClick={startRazorpayCheckout}
-                disabled={billingBusy || accountLoading}
-              >
-                {account?.isSubscribed ? "Subscription Active" : "Upgrade with Razorpay"}
-              </button>
-              <span className="gate-muted">
-                {accountLoading
-                  ? "Loading account..."
-                  : account?.isSubscribed
-                    ? "Your Razorpay plan is already active."
-                    : `${accountUsesLeft} trial use${accountUsesLeft === 1 ? "" : "s"} left in your account.`}
-              </span>
-            </div>
-          ) : (
-            <div className="upgrade-actions">
-              <button
-                type="button"
-                className="account-btn"
-                onClick={() => {
-                  setAuthMode("signup");
-                  setScreen("auth");
-                }}
-              >
-                Create account
-              </button>
-              <button
-                type="button"
-                className="ghost-link"
-                onClick={() => {
-                  setAuthMode("login");
-                  setScreen("auth");
-                }}
-              >
-                I already have an account
-              </button>
-            </div>
-          )}
-
-          {error && <div className="error-card">{error}</div>}
-
-          <div className="upgrade-note upgrade-note-strong">
-            You can return to the generator any time after signing in or upgrading.
+          <div className="upgrade-plan-grid">
+            {plans.map((plan) => (
+              <article key={plan.id} className={`upgrade-plan-card ${plan.isActive ? "is-active" : "is-inactive"}`}>
+                <div className="upgrade-plan-head">
+                  <div>
+                    <h3>{plan.name}</h3>
+                    <p>{plan.description || "Subscription plan"}</p>
+                  </div>
+                  <strong>₹{Math.max(Number(plan.priceInr || 0), 0)}</strong>
+                </div>
+                <div className="upgrade-plan-meta">
+                  <span>{String(plan.billingCycle || "MONTHLY").toLowerCase()}</span>
+                  <span>{plan.isActive ? "Active" : "Inactive"}</span>
+                </div>
+                <ul className="pricing-list upgrade-list">
+                  {(Array.isArray(plan.features) ? plan.features : []).map((feature) => (
+                    <li key={feature}>{feature}</li>
+                  ))}
+                </ul>
+                <div className="upgrade-plan-actions">
+                  {isAuthenticated ? (
+                    <button
+                      type="button"
+                      className="account-btn"
+                      onClick={() => startRazorpayCheckout(plan)}
+                      disabled={billingBusy || accountLoading || !plan.isActive}
+                    >
+                      {plan.isActive ? `Pay ₹${Math.max(Number(plan.priceInr || 0), 0)} with Razorpay` : "Plan inactive"}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="account-btn"
+                      onClick={() => {
+                        setAuthMode("signup");
+                        setScreen("auth");
+                      }}
+                    >
+                      Create account to pay
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
           </div>
         </section>
       </main>
+
+      {error && <div className="upgrade-error-wrap"><div className="error-card">{error}</div></div>}
 
       <footer>
         All processing happens in your browser — no data is uploaded anywhere.

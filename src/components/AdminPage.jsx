@@ -14,8 +14,7 @@ export default function AdminPage({
   clients,
   payments,
   activities,
-  subscriptionAmountInr,
-  subscriptionAmountBusy,
+  plans,
   clientBusyId,
   onBack,
   onRefresh,
@@ -27,6 +26,7 @@ export default function AdminPage({
   onEditUsername,
   onEditPassword,
   onEditSubscriptionAmount,
+  onOpenPlanManager,
 }) {
   const sortedClients = useMemo(() => {
     return [...clients].sort((a, b) => {
@@ -58,6 +58,9 @@ export default function AdminPage({
               </p>
             </div>
             <div className="admin-head-actions">
+              <button type="button" className="account-btn" onClick={onOpenPlanManager}>
+                Manage Plans
+              </button>
               <button type="button" className="account-btn" onClick={onRefresh} disabled={loading}>
                 {loading ? "Refreshing..." : "Refresh Data"}
               </button>
@@ -86,25 +89,43 @@ export default function AdminPage({
               <span>Total Generations</span>
               <strong>{overview.totalGenerations || 0}</strong>
             </article>
-            <article className="admin-stat">
-              <span>Subscription Amount</span>
-              <strong>INR {Math.max(Number(subscriptionAmountInr || 0), 0)}</strong>
-            </article>
           </div>
 
           <section className="admin-section">
             <div className="admin-section-head">
-              <h2>Subscription Settings</h2>
+              <h2>All Plans</h2>
             </div>
-            <div className="admin-actions-row">
-              <button
-                type="button"
-                className="admin-action-btn"
-                onClick={onEditSubscriptionAmount}
-                disabled={loading || subscriptionAmountBusy}
-              >
-                {subscriptionAmountBusy ? "Saving..." : "Set Subscription Amount (INR)"}
-              </button>
+            <div className="profile-table-wrap admin-scroll-wrap">
+              <table className="profile-table admin-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Price</th>
+                    <th>Cycle</th>
+                    <th>Status</th>
+                    <th>Order</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {plans.map((plan) => (
+                    <tr key={plan.id}>
+                      <td>
+                        <strong>{plan.name}</strong>
+                        <div className="admin-plan-subtext">{plan.description || "-"}</div>
+                      </td>
+                      <td>INR {plan.priceInr}</td>
+                      <td>{String(plan.billingCycle || "-")}</td>
+                      <td>{plan.isActive ? "Active" : "Inactive"}</td>
+                      <td>{plan.sortOrder}</td>
+                    </tr>
+                  ))}
+                  {!plans.length && (
+                    <tr>
+                      <td colSpan={5}>No plans configured.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </section>
 

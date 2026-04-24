@@ -76,3 +76,27 @@ model AppSetting {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model AdminSetting {
+  key       String   @id
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AdminPlan {
+  id          String   @id
+  name        String
+  description String?
+  priceInr    Int
+  currency    String   @default("INR")
+  billingCycle String
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  features    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([sortOrder])
+}

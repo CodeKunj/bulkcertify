@@ -36,8 +36,8 @@ export default function LoginPage({
 
           <div className="gate-points">
             <div className="gate-point">
-              <strong>1 free use</strong>
-              <span>Try the generator before upgrading.</span>
+              <strong>2 free uses every month</strong>
+              <span>Signed-in accounts get 2 free generations each month before upgrade.</span>
             </div>
             <div className="gate-point">
               <strong>DOCX, PDF, JPG</strong>
