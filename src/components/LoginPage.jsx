@@ -36,7 +36,7 @@ export default function LoginPage({
 
           <div className="gate-points">
             <div className="gate-point">
-              <strong>3 free uses</strong>
+              <strong>1 free use</strong>
               <span>Try the generator before upgrading.</span>
             </div>
             <div className="gate-point">

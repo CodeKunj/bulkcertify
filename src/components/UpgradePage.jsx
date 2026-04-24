@@ -4,6 +4,7 @@ export default function UpgradePage({
   billingBusy,
   accountLoading,
   accountUsesLeft,
+  subscriptionAmountInr,
   startRazorpayCheckout,
   onBack,
   error,
@@ -27,7 +28,7 @@ export default function UpgradePage({
           </div>
           <h1>Upgrade to keep generating</h1>
           <p className="sub gate-sub">
-            You have used all 3 free runs. Move to Pro for unlimited certificate generation and the full export set.
+            You have used your 1 free run. Move to Pro for unlimited certificate generation and the full export set.
           </p>
 
           <div className="gate-points">
@@ -56,9 +57,10 @@ export default function UpgradePage({
             <p>Unlimited certificate generations with all export formats.</p>
           </div>
           <div className="pricing-price upgrade-price">
-            <strong>$9</strong>
+            <strong>₹{Math.max(Number(subscriptionAmountInr || 0), 1)}</strong>
             <span>/month</span>
           </div>
+          <div className="gate-muted">Charged in INR via Razorpay.</div>
           <ul className="pricing-list upgrade-list">
             <li>Unlimited generation runs</li>
             <li>DOCX, PDF, and JPG export</li>

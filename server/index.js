@@ -17,6 +17,10 @@ const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
 const razorpayWebhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
 const razorpayPlanId = process.env.RAZORPAY_PLAN_ID;
 const guestCookieName = "bulkcertify_guest_id";
+const trialLimit = 1;
+const subscriptionAmountSettingKey = "SUBSCRIPTION_AMOUNT_INR";
+const defaultSubscriptionAmountInr = Math.max(1, Number(process.env.SUBSCRIPTION_AMOUNT_INR || 9) || 9);
+const runtimeSettingsCache = new Map();
 
 const razorpay = razorpayKeyId && razorpayKeySecret
   ? new Razorpay({
@@ -147,10 +151,19 @@ async function getOrCreateUser(req) {
     throw new Error("Unauthorized");
   }
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  let user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
     throw new Error("Unauthorized");
   }
+
+  // Normalize legacy trial counts so non-subscribed users never exceed the trial limit.
+  if (!isAdminUser(user) && !isActiveSubscriber(user) && (user.trialUsageCount || 0) > trialLimit) {
+    user = await prisma.user.update({
+      where: { id: user.id },
+      data: { trialUsageCount: trialLimit },
+    });
+  }
+
   return user;
 }
 
@@ -285,6 +298,128 @@ function verifyRazorpaySignature(payload, signature, secret) {
   return timingSafeEqual(expectedBuffer, signatureBuffer);
 }
 
+function normalizeSubscriptionAmountInr(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  const integer = Math.floor(numeric);
+  if (integer < 1 || integer > 1_000_000) return null;
+  return integer;
+}
+
+function getAppSettingDelegate() {
+  const delegate = prisma?.appSetting;
+  if (!delegate) return null;
+  if (typeof delegate.findUnique !== "function") return null;
+  if (typeof delegate.upsert !== "function") return null;
+  return delegate;
+}
+
+async function getSubscriptionAmountInr() {
+  const fromCache = normalizeSubscriptionAmountInr(runtimeSettingsCache.get(subscriptionAmountSettingKey));
+  if (fromCache) return fromCache;
+
+  const appSetting = getAppSettingDelegate();
+  if (!appSetting) {
+    return defaultSubscriptionAmountInr;
+  }
+
+  const setting = await appSetting.findUnique({
+    where: { key: subscriptionAmountSettingKey },
+    select: { value: true },
+  });
+
+  const fromDb = normalizeSubscriptionAmountInr(setting?.value);
+  if (fromDb) {
+    runtimeSettingsCache.set(subscriptionAmountSettingKey, String(fromDb));
+  }
+  return fromDb || defaultSubscriptionAmountInr;
+}
+
+async function setSubscriptionAmountInr(amountInr) {
+  runtimeSettingsCache.set(subscriptionAmountSettingKey, String(amountInr));
+
+  const appSetting = getAppSettingDelegate();
+  if (!appSetting) {
+    return {
+      key: subscriptionAmountSettingKey,
+      value: String(amountInr),
+    };
+  }
+
+  return appSetting.upsert({
+    where: { key: subscriptionAmountSettingKey },
+    create: {
+      key: subscriptionAmountSettingKey,
+      value: String(amountInr),
+    },
+    update: {
+      value: String(amountInr),
+    },
+  });
+}
+
+async function getOrCreateRazorpayPlanIdForAmount(amountInr) {
+  if (!razorpay) {
+    throw new Error("Razorpay checkout is not configured.");
+  }
+
+  const planCacheKey = `RAZORPAY_PLAN_ID_INR_${amountInr}`;
+  const cachedPlanFromMemory = runtimeSettingsCache.get(planCacheKey);
+  if (cachedPlanFromMemory) {
+    return cachedPlanFromMemory;
+  }
+
+  const appSetting = getAppSettingDelegate();
+  if (!appSetting && razorpayPlanId) {
+    return razorpayPlanId;
+  }
+
+  const cachedPlan = appSetting
+    ? await appSetting.findUnique({
+        where: { key: planCacheKey },
+        select: { value: true },
+      })
+    : null;
+
+  if (cachedPlan?.value) {
+    runtimeSettingsCache.set(planCacheKey, cachedPlan.value);
+    return cachedPlan.value;
+  }
+
+  const plan = await razorpay.plans.create({
+    period: "monthly",
+    interval: 1,
+    item: {
+      name: `Cert/Gen Pro INR ${amountInr}`,
+      amount: amountInr * 100,
+      currency: "INR",
+      description: "Monthly certificate generator subscription",
+    },
+    notes: {
+      amountInr: String(amountInr),
+      source: "bulkcertify-admin-setting",
+    },
+  });
+
+  const createdPlanId = String(plan.id);
+  runtimeSettingsCache.set(planCacheKey, createdPlanId);
+
+  if (appSetting) {
+    await appSetting.upsert({
+      where: { key: planCacheKey },
+      create: {
+        key: planCacheKey,
+        value: createdPlanId,
+      },
+      update: {
+        value: createdPlanId,
+      },
+    });
+  }
+
+  return createdPlanId;
+}
+
 function ensureGuestCookie(req, res) {
   let cookieId = req.cookies?.[guestCookieName];
   if (cookieId) return cookieId;
@@ -301,11 +436,21 @@ function ensureGuestCookie(req, res) {
 
 async function getOrCreateGuestUsage(req, res) {
   const cookieId = ensureGuestCookie(req, res);
-  return prisma.guestUsage.upsert({
+  let usage = await prisma.guestUsage.upsert({
     where: { cookieId },
-    create: { id: generateDbId(), cookieId, remainingUses: 3 },
+    create: { id: generateDbId(), cookieId, remainingUses: trialLimit },
     update: {},
   });
+
+  // Normalize legacy guest trial counts so guests never exceed the trial limit.
+  if ((usage.remainingUses || 0) > trialLimit) {
+    usage = await prisma.guestUsage.update({
+      where: { id: usage.id },
+      data: { remainingUses: trialLimit },
+    });
+  }
+
+  return usage;
 }
 
 app.post(
@@ -355,6 +500,18 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/subscription-settings", async (_req, res) => {
+  try {
+    const amountInr = await getSubscriptionAmountInr();
+    return res.json({
+      amountInr,
+      currency: "INR",
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not load subscription settings." });
+  }
+});
+
 app.post("/api/auth/signup", async (req, res) => {
   try {
     const identifier = normalizeAuthIdentifier(req.body?.email || req.body?.username || "");
@@ -401,7 +558,7 @@ app.post("/api/auth/signup", async (req, res) => {
         email: identifier,
         passwordHash: hashPassword(password),
         isAdmin: identifier === adminEmail,
-        trialUsageCount: 3,
+        trialUsageCount: trialLimit,
         isSubscribed: false,
       },
     });
@@ -488,7 +645,7 @@ app.post("/api/guest/consume", async (req, res) => {
     if (decremented.count === 0) {
       return res.status(402).json({
         allowed: false,
-        message: "Your 3 free guest uses are finished. Please sign in to continue.",
+        message: `Your ${trialLimit} free guest use${trialLimit === 1 ? "" : "s"} is finished. Please sign in to continue.`,
       });
     }
 
@@ -622,19 +779,26 @@ app.post("/api/usage/consume", requireLocalAuth, async (req, res) => {
 });
 
 app.post("/api/razorpay/create-subscription", requireLocalAuth, async (req, res) => {
-  if (!razorpay || !razorpayPlanId || !razorpayKeyId) {
+  if (!razorpay || !razorpayKeyId) {
     return res.status(500).json({ error: "Razorpay checkout is not configured." });
   }
 
   try {
     const user = await getOrCreateUser(req);
+    const amountInr = await getSubscriptionAmountInr();
+    let planId = await getOrCreateRazorpayPlanIdForAmount(amountInr);
+    if (!planId && razorpayPlanId) {
+      planId = razorpayPlanId;
+    }
+
     const subscription = await razorpay.subscriptions.create({
-      plan_id: razorpayPlanId,
+      plan_id: planId,
       total_count: 120,
       customer_notify: 1,
       notes: {
         email: user.email,
         userId: user.id,
+        amountInr: String(amountInr),
       },
     });
 
@@ -657,6 +821,7 @@ app.post("/api/razorpay/create-subscription", requireLocalAuth, async (req, res)
       keyId: razorpayKeyId,
       subscriptionId: String(subscription.id),
       currency: subscription.currency || "INR",
+      amountInr,
       email: user.email,
     });
   } catch (err) {
@@ -715,7 +880,7 @@ app.post("/api/razorpay/verify-payment", requireLocalAuth, async (req, res) => {
     return res.json({
       account: {
         email: refreshed?.email || user.email,
-        trialUsageCount: refreshed?.trialUsageCount ?? 3,
+        trialUsageCount: refreshed?.trialUsageCount ?? trialLimit,
         isSubscribed: !!refreshed?.isSubscribed,
         subscriptionStartDate: refreshed?.subscriptionStartDate,
         subscriptionEndDate: refreshed?.subscriptionEndDate,
@@ -752,10 +917,10 @@ app.get("/api/admin/overview", requireLocalAuth, requireAdmin, async (req, res) 
     });
 
     const totalUserTrialConsumed = users.reduce((sum, user) => {
-      return sum + Math.max(3 - (user.trialUsageCount || 0), 0);
+      return sum + Math.max(trialLimit - (user.trialUsageCount || 0), 0);
     }, 0);
     const totalGuestTrialConsumed = guests.reduce((sum, guest) => {
-      return sum + Math.max(3 - (guest.remainingUses || 0), 0);
+      return sum + Math.max(trialLimit - (guest.remainingUses || 0), 0);
     }, 0);
 
     const totalPayments = await prisma.planHistory.count();
@@ -768,11 +933,54 @@ app.get("/api/admin/overview", requireLocalAuth, requireAdmin, async (req, res) 
         totalGuests,
         totalPayments,
         activePlans,
+        subscriptionAmountInr: await getSubscriptionAmountInr(),
         totalGenerations: totalUserTrialConsumed + totalGuestTrialConsumed,
       },
     });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Could not load admin overview." });
+  }
+});
+
+app.get("/api/admin/subscription-settings", requireLocalAuth, requireAdmin, async (_req, res) => {
+  try {
+    const amountInr = await getSubscriptionAmountInr();
+    return res.json({
+      amountInr,
+      currency: "INR",
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not load subscription settings." });
+  }
+});
+
+app.patch("/api/admin/subscription-settings", requireLocalAuth, requireAdmin, async (req, res) => {
+  try {
+    const nextAmountInr = normalizeSubscriptionAmountInr(req.body?.amountInr);
+    if (!nextAmountInr) {
+      return res.status(400).json({ error: "Amount must be an integer between 1 and 1000000 INR." });
+    }
+
+    const previousAmountInr = await getSubscriptionAmountInr();
+    await setSubscriptionAmountInr(nextAmountInr);
+
+    await logActivity(req, {
+      action: "ADMIN_SUBSCRIPTION_AMOUNT_UPDATED",
+      email: req.localAuthEmail,
+      targetType: "SUBSCRIPTION_SETTING",
+      targetId: subscriptionAmountSettingKey,
+      details: {
+        previousAmountInr,
+        nextAmountInr,
+      },
+    });
+
+    return res.json({
+      amountInr: nextAmountInr,
+      currency: "INR",
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not update subscription settings." });
   }
 });
 
@@ -890,7 +1098,7 @@ app.post("/api/admin/clients/:id/reset-trial", requireLocalAuth, requireAdmin, a
     const userId = String(req.params.id || "");
     const updated = await prisma.user.update({
       where: { id: userId },
-      data: { trialUsageCount: 3 },
+      data: { trialUsageCount: trialLimit },
       select: {
         id: true,
         email: true,

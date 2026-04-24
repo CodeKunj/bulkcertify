@@ -14,6 +14,8 @@ export default function AdminPage({
   clients,
   payments,
   activities,
+  subscriptionAmountInr,
+  subscriptionAmountBusy,
   clientBusyId,
   onBack,
   onRefresh,
@@ -24,6 +26,7 @@ export default function AdminPage({
   onDeleteClient,
   onEditUsername,
   onEditPassword,
+  onEditSubscriptionAmount,
 }) {
   const sortedClients = useMemo(() => {
     return [...clients].sort((a, b) => {
@@ -83,7 +86,27 @@ export default function AdminPage({
               <span>Total Generations</span>
               <strong>{overview.totalGenerations || 0}</strong>
             </article>
+            <article className="admin-stat">
+              <span>Subscription Amount</span>
+              <strong>INR {Math.max(Number(subscriptionAmountInr || 0), 0)}</strong>
+            </article>
           </div>
+
+          <section className="admin-section">
+            <div className="admin-section-head">
+              <h2>Subscription Settings</h2>
+            </div>
+            <div className="admin-actions-row">
+              <button
+                type="button"
+                className="admin-action-btn"
+                onClick={onEditSubscriptionAmount}
+                disabled={loading || subscriptionAmountBusy}
+              >
+                {subscriptionAmountBusy ? "Saving..." : "Set Subscription Amount (INR)"}
+              </button>
+            </div>
+          </section>
 
           <section className="admin-section admin-section-clients">
             <div className="admin-section-head">

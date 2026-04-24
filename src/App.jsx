@@ -171,6 +171,8 @@ export default function App() {
   const [adminActivities, setAdminActivities] = useState([]);
   const [adminClientBusyId, setAdminClientBusyId] = useState(null);
   const [adminSearch, setAdminSearch] = useState("");
+  const [subscriptionAmountInr, setSubscriptionAmountInr] = useState(9);
+  const [adminSubscriptionBusy, setAdminSubscriptionBusy] = useState(false);
   const [error, setError] = useState("");
 
   const getApiUrl = useCallback(
@@ -318,6 +320,25 @@ export default function App() {
     loadGuestTrial();
   }, [authLoading, loadGuestTrial]);
 
+  const loadSubscriptionSettings = useCallback(async () => {
+    try {
+      const res = await publicFetch("/api/subscription-settings");
+      const body = await res.json();
+      if (!res.ok) return;
+
+      const parsedAmount = Number(body?.amountInr);
+      if (Number.isFinite(parsedAmount) && parsedAmount > 0) {
+        setSubscriptionAmountInr(Math.floor(parsedAmount));
+      }
+    } catch {
+      // Keep default amount when loading settings fails.
+    }
+  }, [publicFetch]);
+
+  useEffect(() => {
+    loadSubscriptionSettings();
+  }, [loadSubscriptionSettings]);
+
   const signIn = async (event) => {
     event.preventDefault();
     setAuthError("");
@@ -435,29 +456,35 @@ export default function App() {
     try {
       const query = searchValue.trim() ? `?search=${encodeURIComponent(searchValue.trim())}` : "";
 
-      const [overviewRes, clientsRes, paymentsRes, activitiesRes] = await Promise.all([
+      const [overviewRes, clientsRes, paymentsRes, activitiesRes, subscriptionSettingsRes] = await Promise.all([
         authedFetch("/api/admin/overview"),
         authedFetch(`/api/admin/clients${query}`),
         authedFetch("/api/admin/payments?limit=100"),
         authedFetch("/api/admin/activities?limit=80"),
+        authedFetch("/api/admin/subscription-settings"),
       ]);
 
-      const [overviewBody, clientsBody, paymentsBody, activitiesBody] = await Promise.all([
+      const [overviewBody, clientsBody, paymentsBody, activitiesBody, subscriptionSettingsBody] = await Promise.all([
         overviewRes.json(),
         clientsRes.json(),
         paymentsRes.json(),
         activitiesRes.json(),
+        subscriptionSettingsRes.json(),
       ]);
 
       if (!overviewRes.ok) throw new Error(overviewBody.error || "Failed to load admin overview.");
       if (!clientsRes.ok) throw new Error(clientsBody.error || "Failed to load clients.");
       if (!paymentsRes.ok) throw new Error(paymentsBody.error || "Failed to load payments.");
       if (!activitiesRes.ok) throw new Error(activitiesBody.error || "Failed to load activities.");
+      if (!subscriptionSettingsRes.ok) throw new Error(subscriptionSettingsBody.error || "Failed to load subscription settings.");
 
       setAdminOverview(overviewBody.overview || {});
       setAdminClients(clientsBody.clients || []);
       setAdminPayments(paymentsBody.payments || []);
       setAdminActivities(activitiesBody.activities || []);
+      if (Number.isFinite(Number(subscriptionSettingsBody?.amountInr))) {
+        setSubscriptionAmountInr(Math.floor(Number(subscriptionSettingsBody.amountInr)));
+      }
     } catch (err) {
       setAdminError(err.message || "Could not load admin panel data.");
     } finally {
@@ -619,6 +646,41 @@ export default function App() {
     }
   };
 
+  const editSubscriptionAmount = async () => {
+    const amountInput = window.prompt(
+      "Enter subscription amount in INR",
+      String(subscriptionAmountInr || 9)
+    );
+    if (amountInput === null) return;
+
+    const amountInr = Math.floor(Number(amountInput));
+    if (!Number.isFinite(amountInr) || amountInr < 1 || amountInr > 1_000_000) {
+      setAdminError("Amount must be an integer between 1 and 1000000 INR.");
+      return;
+    }
+
+    setAdminSubscriptionBusy(true);
+    setAdminError("");
+    try {
+      const res = await authedFetch("/api/admin/subscription-settings", {
+        method: "PATCH",
+        body: JSON.stringify({ amountInr }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Could not update subscription amount.");
+
+      const parsedAmount = Number(body?.amountInr);
+      if (Number.isFinite(parsedAmount) && parsedAmount > 0) {
+        setSubscriptionAmountInr(Math.floor(parsedAmount));
+      }
+      await loadAdminData(adminSearch);
+    } catch (err) {
+      setAdminError(err.message || "Could not update subscription amount.");
+    } finally {
+      setAdminSubscriptionBusy(false);
+    }
+  };
+
   const handleExcel = useCallback((file) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -702,6 +764,7 @@ export default function App() {
       const razorpay = new window.Razorpay({
         key: body.keyId,
         subscription_id: body.subscriptionId,
+        currency: body.currency || "INR",
         name: "Cert/Gen Pro",
         description: "Monthly certificate generator subscription",
         prefill: {
@@ -768,7 +831,7 @@ export default function App() {
           setScreen("upgrade");
           setError(
             consumeBody.message ||
-              "Your 3 free guest uses are finished. Please sign in to continue."
+              "Your 1 free guest use is finished. Please sign in to continue."
           );
           return;
         }
@@ -957,6 +1020,7 @@ export default function App() {
         billingBusy={billingBusy}
         accountLoading={accountLoading}
         accountUsesLeft={accountUsesLeft}
+        subscriptionAmountInr={subscriptionAmountInr}
         startRazorpayCheckout={startRazorpayCheckout}
         onBack={closeUpgradePage}
         error={error}
@@ -990,6 +1054,8 @@ export default function App() {
         clients={adminClients}
         payments={adminPayments}
         activities={adminActivities}
+        subscriptionAmountInr={subscriptionAmountInr}
+        subscriptionAmountBusy={adminSubscriptionBusy}
         clientBusyId={adminClientBusyId}
         onBack={() => setScreen("generator")}
         onRefresh={() => loadAdminData(adminSearch)}
@@ -1000,6 +1066,7 @@ export default function App() {
         onDeleteClient={deleteClient}
         onEditUsername={editClientUsername}
         onEditPassword={editClientPassword}
+        onEditSubscriptionAmount={editSubscriptionAmount}
       />
     );
   }
@@ -1116,7 +1183,7 @@ export default function App() {
                 </div>
                 <div className="stat-chip">
                   <span>Next step</span>
-                  <strong>Upgrade after 3 uses</strong>
+                  <strong>Upgrade after free use ends</strong>
                 </div>
               </div>
             </>
