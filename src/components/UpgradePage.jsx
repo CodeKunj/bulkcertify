@@ -1,5 +1,10 @@
 import { useState, useMemo } from "react";
 
+/**
+ * UpgradePage allows users to view available subscription plans,
+ * select their preferred display currency, and initiate the checkout flow.
+ */
+
 export default function UpgradePage({
   isAuthenticated,
   account,
@@ -16,7 +21,13 @@ export default function UpgradePage({
   setScreen,
   onOpenPolicy,
 }) {
+  // State to track the currency the user has selected to view prices in
   const [selectedCurrency, setSelectedCurrency] = useState("INR");
+
+  /**
+   * Dynamically calculates which currencies are available based on the prices
+   * defined in the active subscription plans. Falls back to supportedCurrencies if none found.
+   */
 
   const availableCurrencies = useMemo(() => {
     if (!plans || !plans.length) return supportedCurrencies;
@@ -30,14 +41,26 @@ export default function UpgradePage({
     return result.length > 0 ? result : supportedCurrencies;
   }, [plans, supportedCurrencies]);
 
+  /**
+   * Filters the available plans so only those that have a defined price 
+   * in the currently selected currency are displayed to the user.
+   */
   const filteredPlans = useMemo(() => {
     return (plans || []).filter(p => p.prices && p.prices[selectedCurrency] !== undefined);
   }, [plans, selectedCurrency]);
 
+  /**
+   * Utility to determine if a currency should display decimals.
+   * For example, JPY has no minor units, so it returns 0.
+   */
   const getCurrencyFractionDigits = (currency) => (
     String(currency || "").toUpperCase() === "JPY" ? 0 : 2
   );
 
+  /**
+   * Formats the specific plan price using Intl.NumberFormat based on the 
+   * user's currently selected currency. Returns a formatted currency string.
+   */
   const formatPlanPrice = (plan) => {
     const amountMajor = plan?.prices?.[selectedCurrency] || 0;
     const decimals = getCurrencyFractionDigits(selectedCurrency);

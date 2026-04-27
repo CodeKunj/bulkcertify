@@ -11,6 +11,10 @@ function getCurrencyFractionDigits(currency) {
   return String(currency || "").toUpperCase() === "JPY" ? 0 : 2;
 }
 
+/**
+ * Sub-component used to render the multi-currency prices for a plan
+ * as a series of compact badges within the AdminPage table.
+ */
 function PlanPricesDisplay({ plan }) {
   if (plan.prices && Object.keys(plan.prices).length > 0) {
     return (
@@ -43,6 +47,11 @@ function PlanPricesDisplay({ plan }) {
   );
 }
 
+/**
+ * AdminPage provides an overview dashboard for administrators.
+ * It displays global statistics, all subscription plans, client activity,
+ * and allows administrators to manage users and view recent payments.
+ */
 export default function AdminPage({
   loading,
   error,

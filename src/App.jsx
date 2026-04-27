@@ -795,6 +795,10 @@ export default function App() {
     }
   };
 
+  /**
+   * Sends a request to the backend to create a new subscription plan.
+   * `payload` should contain the plan details, including the multi-currency `prices` object.
+   */
   const createAdminPlan = async (payload) => {
     setAdminPlansError("");
     setAdminPlanBusyId("new");
@@ -815,6 +819,10 @@ export default function App() {
     }
   };
 
+  /**
+   * Sends a request to the backend to update an existing subscription plan.
+   * Modifies the plan with `planId` using the provided `payload`.
+   */
   const editAdminPlan = async (planId, payload) => {
     setAdminPlansError("");
     setAdminPlanBusyId(planId);
@@ -917,6 +925,11 @@ export default function App() {
     triggerDownload(sampleDocxUrl, "Sample_certificate.docx");
   };
 
+  /**
+   * Initiates the Razorpay checkout flow.
+   * Given the selected `plan` and `selectedCurrency`, it requests an order creation
+   * from the backend and then opens the Razorpay popup module.
+   */
   const startRazorpayCheckout = async (plan, selectedCurrency) => {
     if (!isAuthenticated) {
       setError("Please sign in before purchasing a subscription.");

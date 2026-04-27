@@ -537,6 +537,12 @@ function buildDefaultPlans(amountInr) {
   ];
 }
 
+/**
+ * Normalizes incoming plan data to ensure the database receives correctly formatted values.
+ * Parses the incoming `prices` JSON dictionary and validates amounts, keeping only valid currencies.
+ * Provides backwards compatibility for legacy endpoints by dynamically resolving 
+ * single currency fields into the `prices` dictionary.
+ */
 function normalizePlanInput(input, fallbackAmountInr) {
   const name = String(input?.name || "").trim();
   if (!name) return null;
@@ -1338,6 +1344,13 @@ app.post("/api/usage/consume", requireLocalAuth, async (req, res) => {
   }
 });
 
+/**
+ * POST /api/razorpay/create-subscription
+ * Endpoint to initiate a checkout flow with Razorpay.
+ * It resolves the requested currency, verifies if the plan has a valid price
+ * for that currency in its `prices` configuration, generates a Razorpay plan
+ * (if needed), and creates a subscription linked to the user.
+ */
 app.post("/api/razorpay/create-subscription", requireLocalAuth, async (req, res) => {
   if (!razorpay || !razorpayKeyId) {
     return res.status(500).json({ error: "Razorpay checkout is not configured." });

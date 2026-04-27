@@ -1,5 +1,9 @@
 import { useMemo, useState } from "react";
 
+/**
+ * Initial empty state for the plan creation/edit form.
+ * Contains placeholders for features and defaults for billing cycle.
+ */
 const initialForm = {
   id: "",
   name: "",
@@ -33,6 +37,10 @@ function amountMajorFromPlan(plan) {
   return 0;
 }
 
+/**
+ * Sub-component used to render the multi-currency prices for a plan
+ * as a series of compact badges.
+ */
 function PlanPricesDisplay({ plan }) {
   if (plan.prices && Object.keys(plan.prices).length > 0) {
     return (
@@ -86,6 +94,9 @@ function PlanPricesDisplay({ plan }) {
   );
 }
 
+/**
+ * Formats a given billing cycle identifier into a human-readable string.
+ */
 function formatBillingCycle(value) {
   const cycle = String(value || "MONTHLY").toUpperCase();
   if (cycle === "YEARLY") return "Yearly";
@@ -93,6 +104,10 @@ function formatBillingCycle(value) {
   return "Monthly";
 }
 
+/**
+ * AdminPlansPage renders the UI for administrators to create, update, 
+ * delete, and view subscription plans, including multiple currency configurations.
+ */
 export default function AdminPlansPage({
   loading,
   busyId,
@@ -105,9 +120,15 @@ export default function AdminPlansPage({
   onEditPlan,
   onDeletePlan,
 }) {
+  // The current state of the plan being created or edited
   const [form, setForm] = useState(initialForm);
+  // Tracks whether the user is currently editing an existing plan
   const [isEditing, setIsEditing] = useState(false);
 
+  /**
+   * Derives the list of allowed currencies for the form.
+   * If the app supplies global options, they are used; otherwise fallback.
+   */
   const availableCurrencies = useMemo(() => {
     const source = Array.isArray(currencyOptions) && currencyOptions.length
       ? currencyOptions
@@ -120,6 +141,10 @@ export default function AdminPlansPage({
     )];
   }, [currencyOptions]);
 
+  /**
+   * Sorts the plans primarily by their `sortOrder` (ascending)
+   * and secondarily by their name alphabetically.
+   */
   const sortedPlans = useMemo(() => {
     return [...plans].sort((a, b) => {
       const aOrder = Number(a?.sortOrder || 0);
@@ -129,6 +154,10 @@ export default function AdminPlansPage({
     });
   }, [plans]);
 
+  /**
+   * Populates the form with data from the selected plan and 
+   * switches the UI into "Edit" mode.
+   */
   const handleEditClick = (plan) => {
     setIsEditing(true);
     const mappedPrices = {};
@@ -154,11 +183,18 @@ export default function AdminPlansPage({
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  /**
+   * Clears the form and exits "Edit" mode.
+   */
   const handleCancelEdit = () => {
     setIsEditing(false);
     setForm(initialForm);
   };
 
+  /**
+   * Handles the submission of the plan form (both Create and Edit).
+   * Validates the dynamically constructed prices object before submission.
+   */
   const submit = async (event) => {
     event.preventDefault();
     const parsedPrices = {};
