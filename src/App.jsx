@@ -815,62 +815,13 @@ export default function App() {
     }
   };
 
-  const editAdminPlan = async (plan) => {
-    const nextName = window.prompt("Plan name", plan.name || "");
-    if (nextName === null) return;
-
-    const currentCurrency = String(plan.currency || "INR").toUpperCase();
-    const nextCurrencyInput = window.prompt(
-      `Currency (${supportedCurrencies.join(" / ")})`,
-      currentCurrency
-    );
-    if (nextCurrencyInput === null) return;
-
-    const nextCurrency = String(nextCurrencyInput || "").trim().toUpperCase();
-    if (!supportedCurrencies.includes(nextCurrency)) {
-      setAdminPlansError(`Unsupported currency. Allowed: ${supportedCurrencies.join(", ")}`);
-      return;
-    }
-
-    const currentAmount = amountMajorFromPlan(plan);
-    const nextAmountInput = window.prompt(`Price in ${nextCurrency}`, String(currentAmount || 1));
-    if (nextAmountInput === null) return;
-
-    const nextAmount = Number(nextAmountInput);
-    if (!Number.isFinite(nextAmount) || nextAmount <= 0) {
-      setAdminPlansError("Price must be a positive number.");
-      return;
-    }
-
-    const nextBillingCycle = window.prompt("Billing cycle (MONTHLY / QUARTERLY / YEARLY)", String(plan.billingCycle || "MONTHLY"));
-    if (nextBillingCycle === null) return;
-
-    const nextDescription = window.prompt("Description", String(plan.description || ""));
-    if (nextDescription === null) return;
-
-    const nextFeatures = window.prompt(
-      "Features (comma-separated)",
-      Array.isArray(plan.features) ? plan.features.join(", ") : ""
-    );
-    if (nextFeatures === null) return;
-
-    const isActive = window.confirm("Keep this plan active? Click Cancel to mark inactive.");
-
+  const editAdminPlan = async (planId, payload) => {
     setAdminPlansError("");
-    setAdminPlanBusyId(plan.id);
+    setAdminPlanBusyId(planId);
     try {
-      const res = await authedFetch(`/api/admin/plans/${plan.id}`, {
+      const res = await authedFetch(`/api/admin/plans/${planId}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          name: String(nextName || "").trim(),
-          currency: nextCurrency,
-          amount: nextAmount,
-          priceInr: nextCurrency === "INR" ? Math.floor(nextAmount) : undefined,
-          billingCycle: String(nextBillingCycle || "").trim().toUpperCase(),
-          description: String(nextDescription || "").trim(),
-          features: String(nextFeatures || ""),
-          isActive,
-        }),
+        body: JSON.stringify(payload),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || "Could not update plan.");
@@ -966,7 +917,7 @@ export default function App() {
     triggerDownload(sampleDocxUrl, "Sample_certificate.docx");
   };
 
-  const startRazorpayCheckout = async (plan) => {
+  const startRazorpayCheckout = async (plan, selectedCurrency) => {
     if (!isAuthenticated) {
       setError("Please sign in before purchasing a subscription.");
       return;
@@ -980,10 +931,7 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({
           planId: selectedPlan?.id || null,
-          currency: selectedPlan?.currency || null,
-          amountMinor: selectedPlan?.amountMinor || null,
-          amount: selectedPlan ? amountMajorFromPlan(selectedPlan) : null,
-          amountInr: selectedPlan?.priceInr || null,
+          currency: selectedCurrency || null,
         }),
       });
       const body = await res.json();
@@ -1254,6 +1202,7 @@ export default function App() {
         accountLoading={accountLoading}
         accountUsesLeft={accountUsesLeft}
         plans={publicPlans}
+        supportedCurrencies={supportedCurrencies}
         subscriptionAmountInr={subscriptionAmountInr}
         startRazorpayCheckout={startRazorpayCheckout}
         onBack={closeUpgradePage}

@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 
 const initialForm = {
+  id: "",
   name: "",
   description: "",
-  currency: "INR",
-  amount: "9",
+  prices: {},
   billingCycle: "MONTHLY",
   isActive: true,
   sortOrder: "1",
@@ -33,21 +33,57 @@ function amountMajorFromPlan(plan) {
   return 0;
 }
 
-function formatPlanPrice(plan) {
+function PlanPricesDisplay({ plan }) {
+  if (plan.prices && Object.keys(plan.prices).length > 0) {
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', maxWidth: '250px' }}>
+        {Object.entries(plan.prices).map(([currency, amount]) => {
+          const decimals = getCurrencyFractionDigits(currency);
+          let formatted;
+          try {
+            formatted = new Intl.NumberFormat(undefined, {
+              style: "currency",
+              currency,
+              minimumFractionDigits: decimals,
+              maximumFractionDigits: decimals,
+            }).format(amount);
+          } catch {
+            formatted = `${currency} ${Number(amount).toFixed(decimals)}`;
+          }
+          return (
+            <span key={currency} style={{ fontSize: '0.75rem', padding: '0.15rem 0.4rem', backgroundColor: 'var(--border-base)', color: 'var(--text-color)', borderRadius: '4px', whiteSpace: 'nowrap' }}>
+              {formatted}
+            </span>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // legacy fallback
   const currency = String(plan?.currency || "INR").toUpperCase();
   const amount = amountMajorFromPlan(plan);
   const decimals = getCurrencyFractionDigits(currency);
 
+  let formatted;
   try {
-    return new Intl.NumberFormat(undefined, {
+    formatted = new Intl.NumberFormat(undefined, {
       style: "currency",
       currency,
       minimumFractionDigits: decimals,
       maximumFractionDigits: decimals,
     }).format(amount);
   } catch {
-    return `${currency} ${amount.toFixed(decimals)}`;
+    formatted = `${currency} ${amount.toFixed(decimals)}`;
   }
+
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', maxWidth: '250px' }}>
+      <span style={{ fontSize: '0.75rem', padding: '0.15rem 0.4rem', backgroundColor: 'var(--border-base)', color: 'var(--text-color)', borderRadius: '4px', whiteSpace: 'nowrap' }}>
+        {formatted}
+      </span>
+    </div>
+  );
 }
 
 function formatBillingCycle(value) {
@@ -70,6 +106,7 @@ export default function AdminPlansPage({
   onDeletePlan,
 }) {
   const [form, setForm] = useState(initialForm);
+  const [isEditing, setIsEditing] = useState(false);
 
   const availableCurrencies = useMemo(() => {
     const source = Array.isArray(currencyOptions) && currencyOptions.length
@@ -92,23 +129,67 @@ export default function AdminPlansPage({
     });
   }, [plans]);
 
+  const handleEditClick = (plan) => {
+    setIsEditing(true);
+    const mappedPrices = {};
+    if (plan.prices) {
+      for (const [key, val] of Object.entries(plan.prices)) {
+        mappedPrices[key] = String(val);
+      }
+    } else {
+      const c = String(plan.currency || "INR").toUpperCase();
+      mappedPrices[c] = String(amountMajorFromPlan(plan));
+    }
+
+    setForm({
+      id: plan.id,
+      name: plan.name || "",
+      description: plan.description || "",
+      prices: mappedPrices,
+      billingCycle: plan.billingCycle || "MONTHLY",
+      isActive: !!plan.isActive,
+      sortOrder: String(plan.sortOrder || "1"),
+      features: Array.isArray(plan.features) ? plan.features.join(", ") : "",
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditing(false);
+    setForm(initialForm);
+  };
+
   const submit = async (event) => {
     event.preventDefault();
-    const currency = String(form.currency || "INR").trim().toUpperCase();
-    const amount = Number(form.amount);
+    const parsedPrices = {};
+    for (const [currency, val] of Object.entries(form.prices)) {
+      const num = Number(val);
+      if (Number.isFinite(num) && num > 0) {
+        parsedPrices[currency] = num;
+      }
+    }
 
-    await onCreatePlan({
+    if (Object.keys(parsedPrices).length === 0) {
+      alert("Please enter a price for at least one currency.");
+      return;
+    }
+
+    const payload = {
       name: form.name,
       description: form.description,
-      currency,
-      amount,
-      priceInr: currency === "INR" ? Math.floor(amount) : undefined,
+      prices: parsedPrices,
       billingCycle: form.billingCycle,
       isActive: !!form.isActive,
       sortOrder: Number(form.sortOrder),
       features: form.features,
-    });
-    setForm(initialForm);
+    };
+
+    if (isEditing) {
+      await onEditPlan(form.id, payload);
+    } else {
+      await onCreatePlan(payload);
+    }
+    handleCancelEdit();
   };
 
   return (
@@ -146,7 +227,12 @@ export default function AdminPlansPage({
 
           <section className="admin-section">
             <div className="admin-section-head">
-              <h2>Create New Plan</h2>
+              <h2>{isEditing ? "Edit Plan" : "Create New Plan"}</h2>
+              {isEditing && (
+                <button type="button" className="ghost-link" onClick={handleCancelEdit}>
+                  Cancel Edit
+                </button>
+              )}
             </div>
 
             <form className="admin-plan-form" onSubmit={submit}>
@@ -174,29 +260,23 @@ export default function AdminPlansPage({
               </div>
 
               <div className="field">
-                <label htmlFor="plan-currency">Currency</label>
-                <select
-                  id="plan-currency"
-                  value={form.currency}
-                  onChange={(e) => setForm((prev) => ({ ...prev, currency: e.target.value }))}
-                >
+                <label>Prices</label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: '1rem' }}>
                   {availableCurrencies.map((currency) => (
-                    <option key={currency} value={currency}>{currency}</option>
+                    <div key={currency} style={{ display: 'flex', flexDirection: 'column' }}>
+                      <label htmlFor={`price-${currency}`} style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{currency}</label>
+                      <input
+                        id={`price-${currency}`}
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={form.prices[currency] || ""}
+                        onChange={(e) => setForm((prev) => ({ ...prev, prices: { ...prev.prices, [currency]: e.target.value } }))}
+                        placeholder={`Price in ${currency}`}
+                      />
+                    </div>
                   ))}
-                </select>
-              </div>
-
-              <div className="field">
-                <label htmlFor="plan-price">Price</label>
-                <input
-                  id="plan-price"
-                  type="number"
-                  step="0.01"
-                  min="1"
-                  value={form.amount}
-                  onChange={(e) => setForm((prev) => ({ ...prev, amount: e.target.value }))}
-                  required
-                />
+                </div>
               </div>
 
               <div className="field">
@@ -244,7 +324,7 @@ export default function AdminPlansPage({
               </label>
 
               <button type="submit" className="account-btn" disabled={loading}>
-                {loading ? "Saving..." : "Add Plan"}
+                {loading ? "Saving..." : isEditing ? "Save Changes" : "Add Plan"}
               </button>
             </form>
           </section>
@@ -272,7 +352,7 @@ export default function AdminPlansPage({
                         <strong>{plan.name}</strong>
                         <div className="admin-plan-subtext">{plan.description || "-"}</div>
                       </td>
-                      <td>{formatPlanPrice(plan)}</td>
+                      <td><PlanPricesDisplay plan={plan} /></td>
                       <td>{formatBillingCycle(plan.billingCycle)}</td>
                       <td>{plan.isActive ? "Active" : "Inactive"}</td>
                       <td>{plan.sortOrder}</td>
@@ -282,7 +362,7 @@ export default function AdminPlansPage({
                             type="button"
                             className="admin-action-btn"
                             disabled={busyId === plan.id}
-                            onClick={() => onEditPlan(plan)}
+                            onClick={() => handleEditClick(plan)}
                           >
                             Edit
                           </button>

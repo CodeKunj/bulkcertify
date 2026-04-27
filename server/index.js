@@ -521,9 +521,9 @@ function buildDefaultPlans(amountInr) {
       id: "plan-pro-monthly",
       name: "Pro Plan",
       description: "Unlimited certificate generations with all export formats.",
-      priceInr: currency === "INR" ? Math.floor(amount) : Math.floor(defaultSubscriptionAmountInr),
-      currency,
-      amountMinor,
+      prices: {
+        [currency]: Math.floor(amount),
+      },
       provider: "RAZORPAY",
       providerPlanId: null,
       countryScope: null,
@@ -541,33 +541,40 @@ function normalizePlanInput(input, fallbackAmountInr) {
   const name = String(input?.name || "").trim();
   if (!name) return null;
 
-  const currency = normalizeCurrencyCode(input?.currency || defaultSubscriptionCurrency);
-
-  let amountMinor = normalizeAmountMinor(input?.amountMinor, currency);
-  if (!amountMinor) {
-    const fallbackAmount =
-      input?.amount ??
-      (currency === "INR" ? input?.priceInr : null) ??
-      (currency === "INR" ? fallbackAmountInr : null);
-    amountMinor = toMinorUnits(fallbackAmount, currency);
+  let prices = {};
+  if (input?.prices && typeof input.prices === "object") {
+    for (const [key, val] of Object.entries(input.prices)) {
+      const c = normalizeCurrencyCode(key);
+      const v = Number(val);
+      if (Number.isFinite(v) && v > 0) {
+        prices[c] = v;
+      }
+    }
   }
-  if (!amountMinor) return null;
 
-  const amountMajor = fromMinorUnits(amountMinor, currency);
-  if (amountMajor === null) return null;
-
-  const priceInr =
-    currency === "INR"
-      ? Math.floor(amountMajor)
-      : Math.max(1, Math.floor(Number(input?.priceInr || fallbackAmountInr || defaultSubscriptionAmountInr)));
+  if (Object.keys(prices).length === 0) {
+    const currency = normalizeCurrencyCode(input?.currency || defaultSubscriptionCurrency);
+    let amountMinor = normalizeAmountMinor(input?.amountMinor, currency);
+    if (!amountMinor) {
+      const fallbackAmount =
+        input?.amount ??
+        (currency === "INR" ? input?.priceInr : null) ??
+        (currency === "INR" ? fallbackAmountInr : null);
+      amountMinor = toMinorUnits(fallbackAmount, currency);
+    }
+    if (amountMinor) {
+      const amountMajor = fromMinorUnits(amountMinor, currency);
+      if (amountMajor !== null) {
+        prices[currency] = amountMajor;
+      }
+    }
+  }
 
   return {
     id: String(input?.id || generateDbId()),
     name,
     description: String(input?.description || "").trim().slice(0, 500),
-    priceInr,
-    currency,
-    amountMinor,
+    prices,
     provider: String(input?.provider || "RAZORPAY").trim().toUpperCase() || "RAZORPAY",
     providerPlanId: input?.providerPlanId ? String(input.providerPlanId) : null,
     countryScope: input?.countryScope ? String(input.countryScope).trim().toUpperCase().slice(0, 2) : null,
@@ -629,9 +636,7 @@ async function getSubscriptionPlans({ includeInactive = false } = {}) {
                 id: row.id,
                 name: row.name,
                 description: row.description,
-                priceInr: row.priceInr,
-                currency: row.currency,
-                amountMinor: row.amountMinor,
+                prices: row.prices,
                 provider: row.provider,
                 providerPlanId: row.providerPlanId,
                 countryScope: row.countryScope,
@@ -703,9 +708,7 @@ async function setSubscriptionPlans(plans) {
             id: plan.id,
             name: plan.name,
             description: plan.description,
-            priceInr: plan.priceInr,
-            currency: plan.currency,
-            amountMinor: plan.amountMinor,
+            prices: plan.prices,
             provider: plan.provider,
             providerPlanId: plan.providerPlanId,
             countryScope: plan.countryScope,
@@ -717,9 +720,7 @@ async function setSubscriptionPlans(plans) {
           update: {
             name: plan.name,
             description: plan.description,
-            priceInr: plan.priceInr,
-            currency: plan.currency,
-            amountMinor: plan.amountMinor,
+            prices: plan.prices,
             provider: plan.provider,
             providerPlanId: plan.providerPlanId,
             countryScope: plan.countryScope,
@@ -743,8 +744,8 @@ async function setSubscriptionPlans(plans) {
   }
 
   const firstActive = normalizedPlans.find((plan) => plan.isActive);
-  if (firstActive?.priceInr && normalizeCurrencyCode(firstActive.currency) === "INR") {
-    await setSubscriptionAmountInr(firstActive.priceInr);
+  if (firstActive?.prices?.INR) {
+    await setSubscriptionAmountInr(firstActive.prices.INR);
   }
 
   return normalizedPlans;
@@ -796,16 +797,15 @@ async function syncPrimarySubscriptionPlan(amountInr) {
     where: { id: primarySubscriptionPlanId },
   });
 
-  const currency = normalizeCurrencyCode(existing?.currency || defaultPlan.currency || "INR");
-  const amountMinor = toMinorUnits(amountInr, currency) || existing?.amountMinor || defaultPlan.amountMinor;
+  let prices = existing?.prices || defaultPlan.prices || {};
+  if (typeof prices !== 'object') prices = {};
+  prices.INR = amountInr;
 
   const nextPlan = {
     ...defaultPlan,
     ...(existing || {}),
     id: primarySubscriptionPlanId,
-    priceInr: amountInr,
-    currency,
-    amountMinor,
+    prices,
     provider: String(existing?.provider || defaultPlan.provider || "RAZORPAY").toUpperCase(),
   };
 
@@ -815,9 +815,7 @@ async function syncPrimarySubscriptionPlan(amountInr) {
       id: primarySubscriptionPlanId,
       name: nextPlan.name,
       description: nextPlan.description,
-      priceInr: nextPlan.priceInr,
-      currency: nextPlan.currency,
-      amountMinor: nextPlan.amountMinor,
+      prices: nextPlan.prices,
       provider: nextPlan.provider,
       providerPlanId: nextPlan.providerPlanId,
       countryScope: nextPlan.countryScope,
@@ -829,9 +827,7 @@ async function syncPrimarySubscriptionPlan(amountInr) {
     update: {
       name: nextPlan.name,
       description: nextPlan.description,
-      priceInr: nextPlan.priceInr,
-      currency: nextPlan.currency,
-      amountMinor: nextPlan.amountMinor,
+      prices: nextPlan.prices,
       provider: nextPlan.provider,
       providerPlanId: nextPlan.providerPlanId,
       countryScope: nextPlan.countryScope,
@@ -1361,10 +1357,11 @@ app.post("/api/razorpay/create-subscription", requireLocalAuth, async (req, res)
       if (!selectedPlan) {
         return res.status(400).json({ error: "Selected plan is not available." });
       }
-      currency = normalizeCurrencyCode(selectedPlan.currency || currency);
-      amountMinor =
-        normalizeAmountMinor(selectedPlan.amountMinor, currency) ||
-        toMinorUnits(selectedPlan.priceInr, currency);
+      currency = normalizeCurrencyCode(req.body?.currency || currency);
+      const planAmountMajor = selectedPlan.prices?.[currency];
+      if (planAmountMajor) {
+        amountMinor = toMinorUnits(planAmountMajor, currency);
+      }
     } else {
       amountMinor = normalizeAmountMinor(req.body?.amountMinor, currency);
 
@@ -1381,12 +1378,10 @@ app.post("/api/razorpay/create-subscription", requireLocalAuth, async (req, res)
       }
 
       if (!amountMinor) {
-        const planForCurrency = activePlans.find((plan) => normalizeCurrencyCode(plan.currency) === currency);
+        const planForCurrency = activePlans.find((plan) => Boolean(plan.prices?.[currency]));
         if (planForCurrency) {
           selectedPlan = planForCurrency;
-          amountMinor =
-            normalizeAmountMinor(planForCurrency.amountMinor, currency) ||
-            toMinorUnits(planForCurrency.priceInr, currency);
+          amountMinor = toMinorUnits(planForCurrency.prices[currency], currency);
         }
       }
 
