@@ -15,7 +15,21 @@ import AdminPlansPage from "./components/AdminPlansPage";
 import "./App.css";
 import sampleDocxUrl from "../Sample_certificate.docx";
 
-const THEME_STORAGE_KEY = "bulkcertify_theme_mode";
+const THEME_COOKIE_NAME = "bulkcertify_theme_mode";
+
+function getCookieValue(name) {
+  if (typeof document === "undefined") return "";
+
+  const parts = document.cookie ? document.cookie.split("; ") : [];
+  const match = parts.find((part) => part.startsWith(`${name}=`));
+  return match ? decodeURIComponent(match.slice(name.length + 1)) : "";
+}
+
+function setSessionCookie(name, value) {
+  if (typeof document === "undefined") return;
+
+  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; SameSite=Lax`;
+}
 
 function replaceInXml(xml, placeholder, value) {
   const safe = value
@@ -211,7 +225,7 @@ export default function App() {
   );
 
   useEffect(() => {
-    const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    const savedTheme = getCookieValue(THEME_COOKIE_NAME) || window.localStorage.getItem(THEME_COOKIE_NAME);
     if (savedTheme === "light" || savedTheme === "dark") {
       setThemeMode(savedTheme);
       return;
@@ -223,7 +237,8 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", themeMode);
-    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+    setSessionCookie(THEME_COOKIE_NAME, themeMode);
+    window.localStorage.removeItem(THEME_COOKIE_NAME);
   }, [themeMode]);
 
   useEffect(() => {
