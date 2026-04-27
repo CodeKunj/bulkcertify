@@ -143,6 +143,7 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [screen, setScreen] = useState("generator");
   const [upgradeReturnScreen, setUpgradeReturnScreen] = useState("generator");
+  const [skipUpgradeRedirectOnce, setSkipUpgradeRedirectOnce] = useState(false);
   const [policyReturnScreen, setPolicyReturnScreen] = useState("generator");
   const [authMode, setAuthMode] = useState("login");
   const [authLoading, setAuthLoading] = useState(true);
@@ -206,6 +207,11 @@ export default function App() {
   useEffect(() => {
     if (authLoading) return;
 
+    if (skipUpgradeRedirectOnce && screen !== "upgrade") {
+      setSkipUpgradeRedirectOnce(false);
+      return;
+    }
+
     const isFlowScreen =
       screen === "generator" ||
       screen === "auth" ||
@@ -218,7 +224,7 @@ export default function App() {
     if (isAuthenticated) {
       if (account?.isAdmin || account?.isSubscribed) {
         setScreen("generator");
-      } else if (!accountLoading && account && !account.canGenerate) {
+      } else if (!accountLoading && account && !account.canGenerate && screen !== "upgrade") {
         setUpgradeReturnScreen(screen);
         setScreen("upgrade");
       }
@@ -233,7 +239,15 @@ export default function App() {
       setUpgradeReturnScreen(screen);
       setScreen("upgrade");
     }
-  }, [account, accountLoading, authLoading, guestTrial, isAuthenticated, screen]);
+  }, [
+    account,
+    accountLoading,
+    authLoading,
+    guestTrial,
+    isAuthenticated,
+    screen,
+    skipUpgradeRedirectOnce,
+  ]);
 
   const authHeaders = useCallback(() => {
     if (!isAuthenticated || !authEmail) return {};
@@ -417,7 +431,12 @@ export default function App() {
   };
 
   const closeUpgradePage = () => {
-    setScreen(upgradeReturnScreen || "generator");
+    const allowedUpgradeReturnScreens = new Set(["generator", "auth"]);
+    const safeReturnScreen = allowedUpgradeReturnScreens.has(upgradeReturnScreen)
+      ? upgradeReturnScreen
+      : "generator";
+    setSkipUpgradeRedirectOnce(true);
+    setScreen(safeReturnScreen);
   };
 
   const openProfilePage = async () => {
