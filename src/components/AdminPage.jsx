@@ -11,26 +11,36 @@ function getCurrencyFractionDigits(currency) {
   return String(currency || "").toUpperCase() === "JPY" ? 0 : 2;
 }
 
-function formatPlanPrice(plan) {
-  const currency = String(plan?.currency || "INR").toUpperCase();
-  const decimals = getCurrencyFractionDigits(currency);
-  const amountMinor = Number(plan?.amountMinor);
-
-  const amount =
-    Number.isFinite(amountMinor) && amountMinor > 0
-      ? amountMinor / 10 ** decimals
-      : Math.max(Number(plan?.priceInr || 0), 0);
-
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency,
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-    }).format(amount);
-  } catch {
-    return `${currency} ${amount.toFixed(decimals)}`;
+function PlanPricesDisplay({ plan }) {
+  if (plan.prices && Object.keys(plan.prices).length > 0) {
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', maxWidth: '250px' }}>
+        {Object.entries(plan.prices).map(([currency, amount]) => {
+          const decimals = getCurrencyFractionDigits(currency);
+          let formatted;
+          try {
+            formatted = new Intl.NumberFormat(undefined, {
+              style: "currency",
+              currency,
+              minimumFractionDigits: decimals,
+              maximumFractionDigits: decimals,
+            }).format(amount);
+          } catch {
+            formatted = `${currency} ${Number(amount).toFixed(decimals)}`;
+          }
+          return (
+            <span key={currency} style={{ fontSize: '0.75rem', padding: '0.15rem 0.4rem', backgroundColor: 'var(--border-base)', color: 'var(--text-color)', borderRadius: '4px', whiteSpace: 'nowrap' }}>
+              {formatted}
+            </span>
+          );
+        })}
+      </div>
+    );
   }
+
+  return (
+    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>No prices</span>
+  );
 }
 
 export default function AdminPage({
@@ -139,7 +149,7 @@ export default function AdminPage({
                         <strong>{plan.name}</strong>
                         <div className="admin-plan-subtext">{plan.description || "-"}</div>
                       </td>
-                      <td>{formatPlanPrice(plan)}</td>
+                      <td><PlanPricesDisplay plan={plan} /></td>
                       <td>{String(plan.billingCycle || "-")}</td>
                       <td>{plan.isActive ? "Active" : "Inactive"}</td>
                       <td>{plan.sortOrder}</td>
