@@ -33,6 +33,12 @@ model PlanHistory {
   billingCycle     String
   status           String
   subscriptionId   String
+  provider         String   @default("RAZORPAY")
+  providerSubscriptionId String?
+  currency         String   @default("INR")
+  amountMinor      Int?
+  billingCountry   String?
+  paymentMethodType String?
   subscriptionStartDate DateTime?
   subscriptionEndDate   DateTime?
   createdAt        DateTime @default(now())
@@ -43,6 +49,7 @@ model PlanHistory {
   @@index([userId])
   @@index([status])
   @@index([subscriptionId])
+  @@index([providerSubscriptionId])
 }
 
 model GuestUsage {
@@ -90,6 +97,10 @@ model AdminPlan {
   description String?
   priceInr    Int
   currency    String   @default("INR")
+  amountMinor Int?
+  provider    String   @default("RAZORPAY")
+  providerPlanId String?
+  countryScope String?
   billingCycle String
   isActive    Boolean  @default(true)
   sortOrder   Int      @default(0)

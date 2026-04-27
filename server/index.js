@@ -23,6 +23,30 @@ const subscriptionAmountSettingKey = "SUBSCRIPTION_AMOUNT_INR";
 const subscriptionPlansSettingKey = "SUBSCRIPTION_PLANS_V1";
 const primarySubscriptionPlanId = "plan-pro-monthly";
 const defaultSubscriptionAmountInr = Math.max(1, Number(process.env.SUBSCRIPTION_AMOUNT_INR || 9) || 9);
+const defaultSubscriptionCurrency = String(process.env.SUBSCRIPTION_CURRENCY || "INR").trim().toUpperCase();
+const supportedSubscriptionCurrencies = String(
+  process.env.SUBSCRIPTION_SUPPORTED_CURRENCIES || "INR,USD,EUR,GBP,AUD,CAD,SGD,AED"
+)
+  .split(",")
+  .map((value) => String(value || "").trim().toUpperCase())
+  .filter(Boolean);
+const countryToCurrencyMap = {
+  IN: "INR",
+  US: "USD",
+  CA: "CAD",
+  GB: "GBP",
+  AU: "AUD",
+  SG: "SGD",
+  AE: "AED",
+  DE: "EUR",
+  FR: "EUR",
+  ES: "EUR",
+  IT: "EUR",
+  NL: "EUR",
+  PT: "EUR",
+  IE: "EUR",
+  BE: "EUR",
+};
 const runtimeSettingsCache = new Map();
 
 const razorpay = razorpayKeyId && razorpayKeySecret
@@ -278,6 +302,8 @@ async function updateUserBySubscription(subscription) {
   const isSubscribed = isActiveRazorpaySubscription(subscription);
   const subscriptionStartDate = getSubscriptionStartDate(subscription);
   const subscriptionEndDate = getSubscriptionEndDate(subscription);
+  const currency = normalizeCurrencyCode(subscription?.currency || subscription?.notes?.currency || "INR");
+  const amountMinor = normalizeAmountMinor(subscription?.notes?.amountMinor, currency);
 
   const users = await prisma.user.findMany({
     where: { subscriptionId },
@@ -305,6 +331,10 @@ async function updateUserBySubscription(subscription) {
         billingCycle: "Monthly",
         status: isSubscribed ? "ACTIVE" : "INACTIVE",
         subscriptionId,
+        provider: "RAZORPAY",
+        providerSubscriptionId: subscriptionId,
+        currency,
+        amountMinor,
         subscriptionStartDate,
         subscriptionEndDate,
       },
@@ -327,6 +357,10 @@ function toPlanDto(plan) {
     billingCycle: plan.billingCycle,
     status: plan.status,
     subscriptionId: plan.subscriptionId,
+    provider: plan.provider || "RAZORPAY",
+    providerSubscriptionId: plan.providerSubscriptionId || plan.subscriptionId,
+    currency: plan.currency || "INR",
+    amountMinor: plan.amountMinor ?? null,
     startDate: plan.subscriptionStartDate,
     endDate: plan.subscriptionEndDate,
     daysRemaining: daysRemainingFrom(plan.subscriptionEndDate),
@@ -347,12 +381,85 @@ function verifyRazorpaySignature(payload, signature, secret) {
   return timingSafeEqual(expectedBuffer, signatureBuffer);
 }
 
-function normalizeSubscriptionAmountInr(value) {
+function normalizeCurrencyCode(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (!normalized) return "INR";
+  return supportedSubscriptionCurrencies.includes(normalized) ? normalized : "INR";
+}
+
+function getCurrencyFractionDigits(currency) {
+  const normalized = normalizeCurrencyCode(currency);
+  if (normalized === "JPY") return 0;
+  return 2;
+}
+
+function normalizeAmountMinor(value, currency = "INR") {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return null;
   const integer = Math.floor(numeric);
-  if (integer < 1 || integer > 1_000_000) return null;
+  if (integer < 1 || integer > 1_000_000_000) return null;
   return integer;
+}
+
+function toMinorUnits(amountMajor, currency = "INR") {
+  const numeric = Number(amountMajor);
+  if (!Number.isFinite(numeric)) return null;
+  const decimals = getCurrencyFractionDigits(currency);
+  const factor = 10 ** decimals;
+  const minor = Math.round(numeric * factor);
+  return normalizeAmountMinor(minor, currency);
+}
+
+function fromMinorUnits(amountMinor, currency = "INR") {
+  const minor = normalizeAmountMinor(amountMinor, currency);
+  if (!minor) return null;
+  const decimals = getCurrencyFractionDigits(currency);
+  const factor = 10 ** decimals;
+  return minor / factor;
+}
+
+function normalizeSubscriptionAmount(value, currency = "INR") {
+  const minor = toMinorUnits(value, currency);
+  if (!minor) return null;
+  return fromMinorUnits(minor, currency);
+}
+
+function normalizeSubscriptionAmountInr(value) {
+  const amount = normalizeSubscriptionAmount(value, "INR");
+  if (amount === null) return null;
+  return Math.floor(amount);
+}
+
+function detectCountryCode(req) {
+  const rawCountry =
+    req.headers["x-country-code"] ||
+    req.headers["cf-ipcountry"] ||
+    req.headers["x-vercel-ip-country"] ||
+    req.body?.countryCode ||
+    "";
+
+  const countryCode = String(rawCountry || "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(countryCode) ? countryCode : "IN";
+}
+
+function resolveCurrencyForRequest(req, explicitCurrency) {
+  const normalizedExplicit = String(explicitCurrency || "").trim().toUpperCase();
+  if (normalizedExplicit && supportedSubscriptionCurrencies.includes(normalizedExplicit)) {
+    return normalizedExplicit;
+  }
+
+  const countryCode = detectCountryCode(req);
+  const mapped = countryToCurrencyMap[countryCode];
+  if (mapped && supportedSubscriptionCurrencies.includes(mapped)) {
+    return mapped;
+  }
+
+  const fallbackCurrency = normalizeCurrencyCode(defaultSubscriptionCurrency);
+  if (supportedSubscriptionCurrencies.includes(fallbackCurrency)) {
+    return fallbackCurrency;
+  }
+
+  return "INR";
 }
 
 function getAppSettingDelegate() {
@@ -406,13 +513,20 @@ function normalizeBillingCycle(value) {
 }
 
 function buildDefaultPlans(amountInr) {
+  const currency = normalizeCurrencyCode(defaultSubscriptionCurrency);
+  const amountMinor = toMinorUnits(amountInr, currency) || toMinorUnits(defaultSubscriptionAmountInr, "INR") || 900;
+  const amount = fromMinorUnits(amountMinor, currency) || amountInr;
   return [
     {
       id: "plan-pro-monthly",
       name: "Pro Plan",
       description: "Unlimited certificate generations with all export formats.",
-      priceInr: amountInr,
-      currency: "INR",
+      priceInr: currency === "INR" ? Math.floor(amount) : Math.floor(defaultSubscriptionAmountInr),
+      currency,
+      amountMinor,
+      provider: "RAZORPAY",
+      providerPlanId: null,
+      countryScope: null,
       billingCycle: "MONTHLY",
       isActive: true,
       sortOrder: 1,
@@ -427,15 +541,36 @@ function normalizePlanInput(input, fallbackAmountInr) {
   const name = String(input?.name || "").trim();
   if (!name) return null;
 
-  const priceInr = normalizeSubscriptionAmountInr(input?.priceInr ?? fallbackAmountInr);
-  if (!priceInr) return null;
+  const currency = normalizeCurrencyCode(input?.currency || defaultSubscriptionCurrency);
+
+  let amountMinor = normalizeAmountMinor(input?.amountMinor, currency);
+  if (!amountMinor) {
+    const fallbackAmount =
+      input?.amount ??
+      (currency === "INR" ? input?.priceInr : null) ??
+      (currency === "INR" ? fallbackAmountInr : null);
+    amountMinor = toMinorUnits(fallbackAmount, currency);
+  }
+  if (!amountMinor) return null;
+
+  const amountMajor = fromMinorUnits(amountMinor, currency);
+  if (amountMajor === null) return null;
+
+  const priceInr =
+    currency === "INR"
+      ? Math.floor(amountMajor)
+      : Math.max(1, Math.floor(Number(input?.priceInr || fallbackAmountInr || defaultSubscriptionAmountInr)));
 
   return {
     id: String(input?.id || generateDbId()),
     name,
     description: String(input?.description || "").trim().slice(0, 500),
     priceInr,
-    currency: "INR",
+    currency,
+    amountMinor,
+    provider: String(input?.provider || "RAZORPAY").trim().toUpperCase() || "RAZORPAY",
+    providerPlanId: input?.providerPlanId ? String(input.providerPlanId) : null,
+    countryScope: input?.countryScope ? String(input.countryScope).trim().toUpperCase().slice(0, 2) : null,
     billingCycle: normalizeBillingCycle(input?.billingCycle),
     isActive: input?.isActive !== false,
     sortOrder: Number.isFinite(Number(input?.sortOrder)) ? Math.max(0, Math.floor(Number(input.sortOrder))) : 0,
@@ -496,6 +631,10 @@ async function getSubscriptionPlans({ includeInactive = false } = {}) {
                 description: row.description,
                 priceInr: row.priceInr,
                 currency: row.currency,
+                amountMinor: row.amountMinor,
+                provider: row.provider,
+                providerPlanId: row.providerPlanId,
+                countryScope: row.countryScope,
                 billingCycle: row.billingCycle,
                 isActive: row.isActive,
                 sortOrder: row.sortOrder,
@@ -565,7 +704,11 @@ async function setSubscriptionPlans(plans) {
             name: plan.name,
             description: plan.description,
             priceInr: plan.priceInr,
-            currency: "INR",
+            currency: plan.currency,
+            amountMinor: plan.amountMinor,
+            provider: plan.provider,
+            providerPlanId: plan.providerPlanId,
+            countryScope: plan.countryScope,
             billingCycle: plan.billingCycle,
             isActive: plan.isActive,
             sortOrder: plan.sortOrder,
@@ -575,7 +718,11 @@ async function setSubscriptionPlans(plans) {
             name: plan.name,
             description: plan.description,
             priceInr: plan.priceInr,
-            currency: "INR",
+            currency: plan.currency,
+            amountMinor: plan.amountMinor,
+            provider: plan.provider,
+            providerPlanId: plan.providerPlanId,
+            countryScope: plan.countryScope,
             billingCycle: plan.billingCycle,
             isActive: plan.isActive,
             sortOrder: plan.sortOrder,
@@ -596,7 +743,7 @@ async function setSubscriptionPlans(plans) {
   }
 
   const firstActive = normalizedPlans.find((plan) => plan.isActive);
-  if (firstActive?.priceInr) {
+  if (firstActive?.priceInr && normalizeCurrencyCode(firstActive.currency) === "INR") {
     await setSubscriptionAmountInr(firstActive.priceInr);
   }
 
@@ -649,12 +796,17 @@ async function syncPrimarySubscriptionPlan(amountInr) {
     where: { id: primarySubscriptionPlanId },
   });
 
+  const currency = normalizeCurrencyCode(existing?.currency || defaultPlan.currency || "INR");
+  const amountMinor = toMinorUnits(amountInr, currency) || existing?.amountMinor || defaultPlan.amountMinor;
+
   const nextPlan = {
     ...defaultPlan,
     ...(existing || {}),
     id: primarySubscriptionPlanId,
     priceInr: amountInr,
-    currency: "INR",
+    currency,
+    amountMinor,
+    provider: String(existing?.provider || defaultPlan.provider || "RAZORPAY").toUpperCase(),
   };
 
   await adminPlan.upsert({
@@ -665,6 +817,10 @@ async function syncPrimarySubscriptionPlan(amountInr) {
       description: nextPlan.description,
       priceInr: nextPlan.priceInr,
       currency: nextPlan.currency,
+      amountMinor: nextPlan.amountMinor,
+      provider: nextPlan.provider,
+      providerPlanId: nextPlan.providerPlanId,
+      countryScope: nextPlan.countryScope,
       billingCycle: nextPlan.billingCycle,
       isActive: nextPlan.isActive,
       sortOrder: nextPlan.sortOrder,
@@ -675,6 +831,10 @@ async function syncPrimarySubscriptionPlan(amountInr) {
       description: nextPlan.description,
       priceInr: nextPlan.priceInr,
       currency: nextPlan.currency,
+      amountMinor: nextPlan.amountMinor,
+      provider: nextPlan.provider,
+      providerPlanId: nextPlan.providerPlanId,
+      countryScope: nextPlan.countryScope,
       billingCycle: nextPlan.billingCycle,
       isActive: nextPlan.isActive,
       sortOrder: nextPlan.sortOrder,
@@ -724,12 +884,18 @@ async function setSubscriptionAmountInr(amountInr) {
   });
 }
 
-async function getOrCreateRazorpayPlanIdForAmount(amountInr) {
+async function getOrCreateRazorpayPlanIdForPricing({ amountMinor, currency }) {
   if (!razorpay) {
     throw new Error("Razorpay checkout is not configured.");
   }
 
-  const planCacheKey = `RAZORPAY_PLAN_ID_INR_${amountInr}`;
+  const normalizedCurrency = normalizeCurrencyCode(currency);
+  const normalizedAmountMinor = normalizeAmountMinor(amountMinor, normalizedCurrency);
+  if (!normalizedAmountMinor) {
+    throw new Error("Invalid subscription amount.");
+  }
+
+  const planCacheKey = `RAZORPAY_PLAN_ID_${normalizedCurrency}_${normalizedAmountMinor}`;
   const cachedPlanFromMemory = runtimeSettingsCache.get(planCacheKey);
   if (cachedPlanFromMemory) {
     return cachedPlanFromMemory;
@@ -768,13 +934,14 @@ async function getOrCreateRazorpayPlanIdForAmount(amountInr) {
     period: "monthly",
     interval: 1,
     item: {
-      name: `Cert/Gen Pro INR ${amountInr}`,
-      amount: amountInr * 100,
-      currency: "INR",
+      name: `Cert/Gen Pro ${normalizedCurrency} ${fromMinorUnits(normalizedAmountMinor, normalizedCurrency)}`,
+      amount: normalizedAmountMinor,
+      currency: normalizedCurrency,
       description: "Monthly certificate generator subscription",
     },
     notes: {
-      amountInr: String(amountInr),
+      amountMinor: String(normalizedAmountMinor),
+      currency: normalizedCurrency,
       source: "bulkcertify-admin-setting",
     },
   });
@@ -894,9 +1061,14 @@ app.get("/api/health", (_req, res) => {
 app.get("/api/subscription-settings", async (_req, res) => {
   try {
     const amountInr = await getSubscriptionAmountInr();
+    const currency = "INR";
+    const amountMinor = toMinorUnits(amountInr, currency);
     return res.json({
+      amount: amountInr,
+      amountMinor,
       amountInr,
-      currency: "INR",
+      currency,
+      supportedCurrencies: supportedSubscriptionCurrencies,
     });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Could not load subscription settings." });
@@ -1178,23 +1350,58 @@ app.post("/api/razorpay/create-subscription", requireLocalAuth, async (req, res)
   try {
     const user = await getOrCreateUser(req);
     const requestedPlanId = String(req.body?.planId || "").trim();
-    let amountInr = await getSubscriptionAmountInr();
+    const countryCode = detectCountryCode(req);
+    let currency = resolveCurrencyForRequest(req, req.body?.currency);
+    let amountMinor = null;
+    let selectedPlan = null;
+    const activePlans = await getSubscriptionPlans({ includeInactive: false });
 
     if (requestedPlanId) {
-      const activePlans = await getSubscriptionPlans({ includeInactive: false });
-      const selectedPlan = activePlans.find((plan) => plan.id === requestedPlanId);
+      selectedPlan = activePlans.find((plan) => plan.id === requestedPlanId);
       if (!selectedPlan) {
         return res.status(400).json({ error: "Selected plan is not available." });
       }
-      amountInr = normalizeSubscriptionAmountInr(selectedPlan.priceInr) || amountInr;
+      currency = normalizeCurrencyCode(selectedPlan.currency || currency);
+      amountMinor =
+        normalizeAmountMinor(selectedPlan.amountMinor, currency) ||
+        toMinorUnits(selectedPlan.priceInr, currency);
     } else {
-      const requestedAmount = normalizeSubscriptionAmountInr(req.body?.amountInr);
-      if (requestedAmount) {
-        amountInr = requestedAmount;
+      amountMinor = normalizeAmountMinor(req.body?.amountMinor, currency);
+
+      if (!amountMinor) {
+        const requestedAmountMajor = req.body?.amount;
+        amountMinor = toMinorUnits(requestedAmountMajor, currency);
+      }
+
+      if (!amountMinor && currency === "INR") {
+        const requestedAmountInr = normalizeSubscriptionAmountInr(req.body?.amountInr);
+        if (requestedAmountInr) {
+          amountMinor = toMinorUnits(requestedAmountInr, "INR");
+        }
+      }
+
+      if (!amountMinor) {
+        const planForCurrency = activePlans.find((plan) => normalizeCurrencyCode(plan.currency) === currency);
+        if (planForCurrency) {
+          selectedPlan = planForCurrency;
+          amountMinor =
+            normalizeAmountMinor(planForCurrency.amountMinor, currency) ||
+            toMinorUnits(planForCurrency.priceInr, currency);
+        }
+      }
+
+      if (!amountMinor && currency === "INR") {
+        const amountInr = await getSubscriptionAmountInr();
+        amountMinor = toMinorUnits(amountInr, "INR");
       }
     }
 
-    let planId = await getOrCreateRazorpayPlanIdForAmount(amountInr);
+    if (!amountMinor) {
+      return res.status(400).json({ error: "A valid amount is required for the selected currency." });
+    }
+
+    const amount = fromMinorUnits(amountMinor, currency);
+    let planId = await getOrCreateRazorpayPlanIdForPricing({ amountMinor, currency });
     if (!planId && razorpayPlanId) {
       planId = razorpayPlanId;
     }
@@ -1206,7 +1413,9 @@ app.post("/api/razorpay/create-subscription", requireLocalAuth, async (req, res)
       notes: {
         email: user.email,
         userId: user.id,
-        amountInr: String(amountInr),
+        amountMinor: String(amountMinor),
+        currency,
+        countryCode,
       },
     });
 
@@ -1228,9 +1437,14 @@ app.post("/api/razorpay/create-subscription", requireLocalAuth, async (req, res)
     return res.json({
       keyId: razorpayKeyId,
       subscriptionId: String(subscription.id),
-      currency: subscription.currency || "INR",
-      amountInr,
+      provider: "RAZORPAY",
+      countryCode,
+      currency,
+      amountMinor,
+      amount,
+      amountInr: currency === "INR" && amount !== null ? Math.floor(amount) : null,
       planId: requestedPlanId || null,
+      planCurrency: selectedPlan?.currency || null,
       email: user.email,
     });
   } catch (err) {
@@ -1345,9 +1559,14 @@ app.get("/api/admin/overview", requireLocalAuth, requireAdmin, async (req, res) 
 app.get("/api/admin/subscription-settings", requireLocalAuth, requireAdmin, async (_req, res) => {
   try {
     const amountInr = await getSubscriptionAmountInr();
+    const currency = "INR";
+    const amountMinor = toMinorUnits(amountInr, currency);
     return res.json({
+      amount: amountInr,
+      amountMinor,
       amountInr,
-      currency: "INR",
+      currency,
+      supportedCurrencies: supportedSubscriptionCurrencies,
     });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Could not load subscription settings." });
@@ -1376,8 +1595,11 @@ app.patch("/api/admin/subscription-settings", requireLocalAuth, requireAdmin, as
     });
 
     return res.json({
+      amount: nextAmountInr,
+      amountMinor: toMinorUnits(nextAmountInr, "INR"),
       amountInr: nextAmountInr,
       currency: "INR",
+      supportedCurrencies: supportedSubscriptionCurrencies,
     });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Could not update subscription settings." });
@@ -1400,7 +1622,7 @@ app.post("/api/admin/plans", requireLocalAuth, requireAdmin, async (req, res) =>
     const plan = normalizePlanInput(req.body || {}, fallbackAmount);
 
     if (!plan) {
-      return res.status(400).json({ error: "Plan name and valid INR amount are required." });
+      return res.status(400).json({ error: "Plan name and valid amount are required." });
     }
 
     const updatedPlans = await setSubscriptionPlans([...existingPlans, plan]);
@@ -1410,7 +1632,12 @@ app.post("/api/admin/plans", requireLocalAuth, requireAdmin, async (req, res) =>
       email: req.localAuthEmail,
       targetType: "PLAN",
       targetId: plan.id,
-      details: { name: plan.name, priceInr: plan.priceInr },
+      details: {
+        name: plan.name,
+        priceInr: plan.priceInr,
+        currency: plan.currency,
+        amountMinor: plan.amountMinor,
+      },
     });
 
     return res.status(201).json({ plans: updatedPlans, plan });
@@ -1445,7 +1672,13 @@ app.patch("/api/admin/plans/:id", requireLocalAuth, requireAdmin, async (req, re
       email: req.localAuthEmail,
       targetType: "PLAN",
       targetId: planId,
-      details: { name: merged.name, priceInr: merged.priceInr, isActive: merged.isActive },
+      details: {
+        name: merged.name,
+        priceInr: merged.priceInr,
+        currency: merged.currency,
+        amountMinor: merged.amountMinor,
+        isActive: merged.isActive,
+      },
     });
 
     return res.json({ plans: updatedPlans, plan: merged });
