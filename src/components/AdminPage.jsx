@@ -33,7 +33,7 @@ function PlanPricesDisplay({ plan }) {
             formatted = `${currency} ${Number(amount).toFixed(decimals)}`;
           }
           return (
-            <span key={currency} style={{ fontSize: '0.75rem', padding: '0.15rem 0.4rem', backgroundColor: 'var(--border-base)', color: 'var(--text-color)', borderRadius: '4px', whiteSpace: 'nowrap' }}>
+            <span key={currency} style={{ fontSize: '0.75rem', padding: '0.15rem 0.4rem', backgroundColor: 'var(--border)', color: 'var(--text)', borderRadius: '4px', whiteSpace: 'nowrap' }}>
               {formatted}
             </span>
           );
@@ -43,7 +43,7 @@ function PlanPricesDisplay({ plan }) {
   }
 
   return (
-    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>No prices</span>
+    <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>No prices</span>
   );
 }
 

@@ -59,7 +59,7 @@ function PlanPricesDisplay({ plan }) {
             formatted = `${currency} ${Number(amount).toFixed(decimals)}`;
           }
           return (
-            <span key={currency} style={{ fontSize: '0.75rem', padding: '0.15rem 0.4rem', backgroundColor: 'var(--border-base)', color: 'var(--text-color)', borderRadius: '4px', whiteSpace: 'nowrap' }}>
+            <span key={currency} style={{ fontSize: '0.75rem', padding: '0.15rem 0.4rem', backgroundColor: 'var(--border)', color: 'var(--text)', borderRadius: '4px', whiteSpace: 'nowrap' }}>
               {formatted}
             </span>
           );
@@ -87,7 +87,7 @@ function PlanPricesDisplay({ plan }) {
 
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', maxWidth: '250px' }}>
-      <span style={{ fontSize: '0.75rem', padding: '0.15rem 0.4rem', backgroundColor: 'var(--border-base)', color: 'var(--text-color)', borderRadius: '4px', whiteSpace: 'nowrap' }}>
+      <span style={{ fontSize: '0.75rem', padding: '0.15rem 0.4rem', backgroundColor: 'var(--border)', color: 'var(--text)', borderRadius: '4px', whiteSpace: 'nowrap' }}>
         {formatted}
       </span>
     </div>
@@ -300,7 +300,7 @@ export default function AdminPlansPage({
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: '1rem' }}>
                   {availableCurrencies.map((currency) => (
                     <div key={currency} style={{ display: 'flex', flexDirection: 'column' }}>
-                      <label htmlFor={`price-${currency}`} style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{currency}</label>
+                      <label htmlFor={`price-${currency}`} style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>{currency}</label>
                       <input
                         id={`price-${currency}`}
                         type="number"

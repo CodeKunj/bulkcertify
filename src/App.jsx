@@ -15,6 +15,7 @@ import AdminPlansPage from "./components/AdminPlansPage";
 import "./App.css";
 import sampleDocxUrl from "../Sample_certificate.docx";
 
+const THEME_STORAGE_KEY = "bulkcertify_theme_mode";
 
 function replaceInXml(xml, placeholder, value) {
   const safe = value
@@ -158,6 +159,7 @@ function loadRazorpayCheckout() {
 
 export default function App() {
   const apiBase = import.meta.env.VITE_API_URL || "";
+  const [themeMode, setThemeMode] = useState("light");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -207,6 +209,22 @@ export default function App() {
     (path) => (apiBase ? `${apiBase}${path}` : path),
     [apiBase]
   );
+
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (savedTheme === "light" || savedTheme === "dark") {
+      setThemeMode(savedTheme);
+      return;
+    }
+
+    const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    setThemeMode(prefersDark ? "dark" : "light");
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", themeMode);
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [themeMode]);
 
   useEffect(() => {
     const savedAuth = window.localStorage.getItem("bulkcertify_local_auth");
@@ -1185,9 +1203,43 @@ export default function App() {
 
   const guestUsesLeft = Math.max(guestTrial?.remainingUses || 0, 0);
   const accountUsesLeft = Math.max(account?.trialUsageCount || 0, 0);
+  const isDarkMode = themeMode === "dark";
+
+  const renderWithThemeToggle = (content) => (
+    <>
+      {content}
+      <button
+        type="button"
+        className={`theme-toggle ${isDarkMode ? "is-dark" : "is-light"}`}
+        onClick={() => setThemeMode((prev) => (prev === "dark" ? "light" : "dark"))}
+        aria-label={`Switch to ${isDarkMode ? "light" : "dark"} mode`}
+        title={`Switch to ${isDarkMode ? "light" : "dark"} mode`}
+      >
+        <span className="theme-toggle-icon theme-toggle-sun" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="4.5" />
+            <path d="M12 2.5v2.2" />
+            <path d="M12 19.3v2.2" />
+            <path d="M4.9 4.9l1.6 1.6" />
+            <path d="M17.5 17.5l1.6 1.6" />
+            <path d="M2.5 12h2.2" />
+            <path d="M19.3 12h2.2" />
+            <path d="M4.9 19.1l1.6-1.6" />
+            <path d="M17.5 6.5l1.6-1.6" />
+          </svg>
+        </span>
+        <span className="theme-toggle-icon theme-toggle-moon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 12.8A8.8 8.8 0 1 1 11.2 3 7.1 7.1 0 0 0 21 12.8Z" />
+          </svg>
+        </span>
+        <span className="theme-toggle-thumb" aria-hidden="true" />
+      </button>
+    </>
+  );
 
   if (screen === "auth") {
-    return (
+    return renderWithThemeToggle(
       <LoginPage
         authMode={authMode}
         setAuthMode={setAuthMode}
@@ -1207,7 +1259,7 @@ export default function App() {
   }
 
   if (screen === "upgrade") {
-    return (
+    return renderWithThemeToggle(
       <UpgradePage
         isAuthenticated={isAuthenticated}
         account={account}
@@ -1228,11 +1280,11 @@ export default function App() {
   }
 
   if (screen === "policy") {
-    return <PolicyPage onBack={closePolicyPage} />;
+    return renderWithThemeToggle(<PolicyPage onBack={closePolicyPage} />);
   }
 
   if (screen === "profile") {
-    return (
+    return renderWithThemeToggle(
       <ProfilePage
         profile={profileData}
         loading={profileBusy}
@@ -1242,7 +1294,7 @@ export default function App() {
   }
 
   if (screen === "admin") {
-    return (
+    return renderWithThemeToggle(
       <AdminPage
         loading={adminLoading}
         error={adminError}
@@ -1270,7 +1322,7 @@ export default function App() {
   }
 
   if (screen === "admin-plans") {
-    return (
+    return renderWithThemeToggle(
       <AdminPlansPage
         loading={adminPlansLoading}
         busyId={adminPlanBusyId}
@@ -1286,7 +1338,7 @@ export default function App() {
     );
   }
 
-  return (
+  return renderWithThemeToggle(
     <div className="app">
       <div className="live-bg" aria-hidden="true">
         <div className="aurora aurora-a" />

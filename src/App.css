@@ -11,6 +11,10 @@
   --text: #1a1a1a;
   --muted: #999;
   --hint: #bbb;
+  --surface-base: var(--surface);
+  --border-base: var(--border);
+  --text-color: var(--text);
+  --text-muted: var(--muted);
   --accent-green: #2d6a0f;
   --accent-green-bg: #f0f7e8;
   --accent-green-border: #c8e6a0;
@@ -19,12 +23,27 @@
   --radius-xs: 8px;
 }
 
+:root[data-theme='dark'] {
+  --bg: #0f1318;
+  --surface: #171d24;
+  --surface2: #1d2530;
+  --border: #2c3744;
+  --border2: #3a4758;
+  --text: #eef2f7;
+  --muted: #a7b1bf;
+  --hint: #7d8896;
+  --accent-green: #8fd06c;
+  --accent-green-bg: #233321;
+  --accent-green-border: #466447;
+}
+
 
 body {
   font-family: 'Mulish', sans-serif;
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 .app {
@@ -76,6 +95,20 @@ body {
   background-size: 42px 42px;
   mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0));
   animation: driftGrid 30s linear infinite;
+}
+
+:root[data-theme='dark'] .aurora-a {
+  background: radial-gradient(circle at 30% 30%, #8a6a2f 0%, #3f5b2e 45%, rgba(16, 18, 20, 0) 75%);
+}
+
+:root[data-theme='dark'] .aurora-b {
+  background: radial-gradient(circle at 68% 35%, #1c6f68 0%, #234c76 50%, rgba(16, 18, 20, 0) 75%);
+}
+
+:root[data-theme='dark'] .grid-drift {
+  background-image:
+    linear-gradient(rgba(238, 242, 247, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(238, 242, 247, 0.08) 1px, transparent 1px);
 }
 
 @keyframes floatAuroraA {
@@ -1149,10 +1182,15 @@ main {
   font-family: 'Mulish', sans-serif;
   font-weight: 700;
   cursor: pointer;
+  min-height: 30px;
+  line-height: 1;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset;
+  transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.1s ease;
 }
 
 .admin-action-btn:hover:not(:disabled) {
   border-color: var(--text);
+  transform: translateY(-1px);
 }
 
 .admin-action-btn:disabled {
@@ -1164,6 +1202,25 @@ main {
   color: #b91c1c;
   border-color: #f7cfcf;
   background: #fff5f5;
+}
+
+:root[data-theme='dark'] .admin-action-btn {
+  background: #24303d;
+  border-color: #3c4a5b;
+  color: #f4f7fb;
+  box-shadow: none;
+}
+
+:root[data-theme='dark'] .admin-action-btn:hover:not(:disabled) {
+  background: #2d3a49;
+  border-color: #5c6b7b;
+  color: #ffffff;
+}
+
+:root[data-theme='dark'] .admin-action-btn.danger {
+  background: #3b2323;
+  border-color: #7a3d3d;
+  color: #ffd1d1;
 }
 
 .admin-plan-form {
@@ -1270,10 +1327,10 @@ main {
   }
 
   .admin-lower-grid {
-
-  .upgrade-plan-grid {
     grid-template-columns: 1fr;
   }
+
+  .upgrade-plan-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -1408,6 +1465,147 @@ footer {
 
 .footer-link:hover {
   color: var(--text);
+}
+
+.theme-toggle {
+  position: fixed;
+  right: 1rem;
+  top: 1rem;
+  z-index: 50;
+  width: 150px;
+  height: 56px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+    #121212;
+  color: #f4f4f4;
+  border-radius: 999px;
+  padding: 0;
+  font-family: 'Mulish', sans-serif;
+  cursor: pointer;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-inline: 1rem;
+  transition: transform 0.16s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.theme-toggle:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 22px 46px rgba(0, 0, 0, 0.34), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.theme-toggle:active {
+  transform: translateY(0) scale(0.99);
+}
+
+:root[data-theme='dark'] .theme-toggle {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.015)),
+    #161616;
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.theme-toggle-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 2;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.theme-toggle-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.theme-toggle-thumb {
+  position: absolute;
+  top: 50%;
+  left: 9px;
+  width: 50px;
+  height: 42px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #2f2f2f, #111111);
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.35),
+    inset 0 0 18px rgba(255, 255, 255, 0.05);
+  transform: translateY(-50%);
+  transition: left 0.22s ease, background-color 0.22s ease, transform 0.22s ease;
+}
+
+.theme-toggle.is-dark .theme-toggle-thumb {
+  left: calc(100% - 59px);
+}
+
+.theme-toggle.is-light .theme-toggle-sun {
+  color: #fff6c7;
+}
+
+.theme-toggle.is-light .theme-toggle-moon {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.theme-toggle.is-dark .theme-toggle-sun {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.theme-toggle.is-dark .theme-toggle-moon {
+  color: #f7f7f7;
+}
+
+:root[data-theme='dark'] .policy-card,
+:root[data-theme='dark'] .gate-point,
+:root[data-theme='dark'] .gate-card,
+:root[data-theme='dark'] .upgrade-plan-card {
+  background: rgba(23, 29, 36, 0.9);
+}
+
+:root[data-theme='dark'] .profile-item,
+:root[data-theme='dark'] .admin-stat,
+:root[data-theme='dark'] .stat-chip,
+:root[data-theme='dark'] .attr-row,
+:root[data-theme='dark'] .admin-lower-grid .admin-section {
+  background: #1a222c;
+}
+
+:root[data-theme='dark'] .profile-table th {
+  background: #212a34;
+}
+
+:root[data-theme='dark'] .account-btn,
+:root[data-theme='dark'] .btn-gen,
+:root[data-theme='dark'] .badge,
+:root[data-theme='dark'] .gate-tab.active {
+  background: var(--text);
+  color: #0f1318;
+  border-color: var(--text);
+}
+
+:root[data-theme='dark'] .drop-area:hover,
+:root[data-theme='dark'] .drop-area.over,
+:root[data-theme='dark'] .drop-area.filled,
+:root[data-theme='dark'] .sample-btn:hover,
+:root[data-theme='dark'] .add-attr-btn:hover {
+  background: #242e3a;
+}
+
+:root[data-theme='dark'] .upgrade-note {
+  background: #372714;
+  border-color: #9a5b20;
+  color: #ffd9b0;
+}
+
+:root[data-theme='dark'] .error-card {
+  background: #3a1d1d;
+  border-color: #8d3d3d;
+  color: #ffc4c4;
 }
 
 /* Desktop-lock admin layout on all viewport sizes */
