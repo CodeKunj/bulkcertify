@@ -7,6 +7,32 @@ function formatDate(value) {
   return date.toLocaleString();
 }
 
+function getCurrencyFractionDigits(currency) {
+  return String(currency || "").toUpperCase() === "JPY" ? 0 : 2;
+}
+
+function formatPlanPrice(plan) {
+  const currency = String(plan?.currency || "INR").toUpperCase();
+  const decimals = getCurrencyFractionDigits(currency);
+  const amountMinor = Number(plan?.amountMinor);
+
+  const amount =
+    Number.isFinite(amountMinor) && amountMinor > 0
+      ? amountMinor / 10 ** decimals
+      : Math.max(Number(plan?.priceInr || 0), 0);
+
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    }).format(amount);
+  } catch {
+    return `${currency} ${amount.toFixed(decimals)}`;
+  }
+}
+
 export default function AdminPage({
   loading,
   error,
@@ -113,7 +139,7 @@ export default function AdminPage({
                         <strong>{plan.name}</strong>
                         <div className="admin-plan-subtext">{plan.description || "-"}</div>
                       </td>
-                      <td>INR {plan.priceInr}</td>
+                      <td>{formatPlanPrice(plan)}</td>
                       <td>{String(plan.billingCycle || "-")}</td>
                       <td>{plan.isActive ? "Active" : "Inactive"}</td>
                       <td>{plan.sortOrder}</td>

@@ -13,6 +13,32 @@ export default function UpgradePage({
   setScreen,
   onOpenPolicy,
 }) {
+  const getCurrencyFractionDigits = (currency) => (
+    String(currency || "").toUpperCase() === "JPY" ? 0 : 2
+  );
+
+  const formatPlanPrice = (plan) => {
+    const currency = String(plan?.currency || "INR").toUpperCase();
+    const decimals = getCurrencyFractionDigits(currency);
+    const amountMinor = Number(plan?.amountMinor);
+
+    const amount =
+      Number.isFinite(amountMinor) && amountMinor > 0
+        ? amountMinor / 10 ** decimals
+        : Math.max(Number(plan?.priceInr || 0), 0);
+
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency,
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+      }).format(amount);
+    } catch {
+      return `${currency} ${amount.toFixed(decimals)}`;
+    }
+  };
+
   return (
     <div className="app gate-app">
       <div className="live-bg" aria-hidden="true">
@@ -66,7 +92,7 @@ export default function UpgradePage({
                     <h3>{plan.name}</h3>
                     <p>{plan.description || "Subscription plan"}</p>
                   </div>
-                  <strong>₹{Math.max(Number(plan.priceInr || 0), 0)}</strong>
+                  <strong>{formatPlanPrice(plan)}</strong>
                 </div>
                 <div className="upgrade-plan-meta">
                   <span>{String(plan.billingCycle || "MONTHLY").toLowerCase()}</span>
@@ -85,7 +111,7 @@ export default function UpgradePage({
                       onClick={() => startRazorpayCheckout(plan)}
                       disabled={billingBusy || accountLoading || !plan.isActive}
                     >
-                      {plan.isActive ? `Pay ₹${Math.max(Number(plan.priceInr || 0), 0)} with Razorpay` : "Plan inactive"}
+                      {plan.isActive ? `Pay ${formatPlanPrice(plan)} with Razorpay` : "Plan inactive"}
                     </button>
                   ) : (
                     <button

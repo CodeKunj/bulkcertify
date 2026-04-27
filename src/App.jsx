@@ -121,6 +121,26 @@ function triggerDownload(blobOrUrl, fileName) {
   }
 }
 
+function getCurrencyFractionDigits(currency) {
+  return String(currency || "").toUpperCase() === "JPY" ? 0 : 2;
+}
+
+function amountMajorFromPlan(plan) {
+  const currency = String(plan?.currency || "INR").toUpperCase();
+  const decimals = getCurrencyFractionDigits(currency);
+  const amountMinor = Number(plan?.amountMinor);
+
+  if (Number.isFinite(amountMinor) && amountMinor > 0) {
+    return amountMinor / 10 ** decimals;
+  }
+
+  if (currency === "INR") {
+    return Math.max(Number(plan?.priceInr || 0), 0);
+  }
+
+  return 0;
+}
+
 function loadRazorpayCheckout() {
   if (window.Razorpay) {
     return Promise.resolve(true);
@@ -178,6 +198,7 @@ export default function App() {
   const [adminClientBusyId, setAdminClientBusyId] = useState(null);
   const [adminSearch, setAdminSearch] = useState("");
   const [publicPlans, setPublicPlans] = useState([]);
+  const [supportedCurrencies, setSupportedCurrencies] = useState(["INR", "USD", "EUR", "GBP", "AUD", "CAD", "SGD", "AED"]);
   const [subscriptionAmountInr, setSubscriptionAmountInr] = useState(9);
   const [adminSubscriptionBusy, setAdminSubscriptionBusy] = useState(false);
   const [error, setError] = useState("");
@@ -349,6 +370,15 @@ export default function App() {
       const parsedAmount = Number(body?.amountInr);
       if (Number.isFinite(parsedAmount) && parsedAmount > 0) {
         setSubscriptionAmountInr(Math.floor(parsedAmount));
+      }
+      if (Array.isArray(body?.supportedCurrencies) && body.supportedCurrencies.length) {
+        setSupportedCurrencies([
+          ...new Set(
+            body.supportedCurrencies
+              .map((currency) => String(currency || "").trim().toUpperCase())
+              .filter(Boolean)
+          ),
+        ]);
       }
     } catch {
       // Keep default amount when loading settings fails.
@@ -549,6 +579,15 @@ export default function App() {
       setAdminPlans(plansBody.plans || []);
       if (Number.isFinite(Number(subscriptionSettingsBody?.amountInr))) {
         setSubscriptionAmountInr(Math.floor(Number(subscriptionSettingsBody.amountInr)));
+      }
+      if (Array.isArray(subscriptionSettingsBody?.supportedCurrencies) && subscriptionSettingsBody.supportedCurrencies.length) {
+        setSupportedCurrencies([
+          ...new Set(
+            subscriptionSettingsBody.supportedCurrencies
+              .map((currency) => String(currency || "").trim().toUpperCase())
+              .filter(Boolean)
+          ),
+        ]);
       }
     } catch (err) {
       setAdminError(err.message || "Could not load admin panel data.");
@@ -780,8 +819,28 @@ export default function App() {
     const nextName = window.prompt("Plan name", plan.name || "");
     if (nextName === null) return;
 
-    const nextPrice = window.prompt("Price in INR", String(plan.priceInr || 1));
-    if (nextPrice === null) return;
+    const currentCurrency = String(plan.currency || "INR").toUpperCase();
+    const nextCurrencyInput = window.prompt(
+      `Currency (${supportedCurrencies.join(" / ")})`,
+      currentCurrency
+    );
+    if (nextCurrencyInput === null) return;
+
+    const nextCurrency = String(nextCurrencyInput || "").trim().toUpperCase();
+    if (!supportedCurrencies.includes(nextCurrency)) {
+      setAdminPlansError(`Unsupported currency. Allowed: ${supportedCurrencies.join(", ")}`);
+      return;
+    }
+
+    const currentAmount = amountMajorFromPlan(plan);
+    const nextAmountInput = window.prompt(`Price in ${nextCurrency}`, String(currentAmount || 1));
+    if (nextAmountInput === null) return;
+
+    const nextAmount = Number(nextAmountInput);
+    if (!Number.isFinite(nextAmount) || nextAmount <= 0) {
+      setAdminPlansError("Price must be a positive number.");
+      return;
+    }
 
     const nextBillingCycle = window.prompt("Billing cycle (MONTHLY / QUARTERLY / YEARLY)", String(plan.billingCycle || "MONTHLY"));
     if (nextBillingCycle === null) return;
@@ -804,7 +863,9 @@ export default function App() {
         method: "PATCH",
         body: JSON.stringify({
           name: String(nextName || "").trim(),
-          priceInr: Number(nextPrice),
+          currency: nextCurrency,
+          amount: nextAmount,
+          priceInr: nextCurrency === "INR" ? Math.floor(nextAmount) : undefined,
           billingCycle: String(nextBillingCycle || "").trim().toUpperCase(),
           description: String(nextDescription || "").trim(),
           features: String(nextFeatures || ""),
@@ -919,6 +980,9 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({
           planId: selectedPlan?.id || null,
+          currency: selectedPlan?.currency || null,
+          amountMinor: selectedPlan?.amountMinor || null,
+          amount: selectedPlan ? amountMajorFromPlan(selectedPlan) : null,
           amountInr: selectedPlan?.priceInr || null,
         }),
       });
@@ -1250,6 +1314,7 @@ export default function App() {
         busyId={adminPlanBusyId}
         error={adminPlansError}
         plans={adminPlans}
+        currencyOptions={supportedCurrencies}
         onBack={() => setScreen("admin")}
         onRefresh={loadAdminPlans}
         onCreatePlan={createAdminPlan}

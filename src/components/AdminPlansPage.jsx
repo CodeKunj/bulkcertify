@@ -3,12 +3,52 @@ import { useMemo, useState } from "react";
 const initialForm = {
   name: "",
   description: "",
-  priceInr: "9",
+  currency: "INR",
+  amount: "9",
   billingCycle: "MONTHLY",
   isActive: true,
   sortOrder: "1",
   features: "Unlimited generation runs, DOCX, PDF, and JPG export",
 };
+
+const fallbackCurrencies = ["INR", "USD", "EUR", "GBP", "AUD", "CAD", "SGD", "AED"];
+
+function getCurrencyFractionDigits(currency) {
+  return String(currency || "").toUpperCase() === "JPY" ? 0 : 2;
+}
+
+function amountMajorFromPlan(plan) {
+  const currency = String(plan?.currency || "INR").toUpperCase();
+  const decimals = getCurrencyFractionDigits(currency);
+  const amountMinor = Number(plan?.amountMinor);
+
+  if (Number.isFinite(amountMinor) && amountMinor > 0) {
+    return amountMinor / 10 ** decimals;
+  }
+
+  if (currency === "INR") {
+    return Math.max(Number(plan?.priceInr || 0), 0);
+  }
+
+  return 0;
+}
+
+function formatPlanPrice(plan) {
+  const currency = String(plan?.currency || "INR").toUpperCase();
+  const amount = amountMajorFromPlan(plan);
+  const decimals = getCurrencyFractionDigits(currency);
+
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    }).format(amount);
+  } catch {
+    return `${currency} ${amount.toFixed(decimals)}`;
+  }
+}
 
 function formatBillingCycle(value) {
   const cycle = String(value || "MONTHLY").toUpperCase();
@@ -22,6 +62,7 @@ export default function AdminPlansPage({
   busyId,
   error,
   plans,
+  currencyOptions,
   onBack,
   onRefresh,
   onCreatePlan,
@@ -29,6 +70,18 @@ export default function AdminPlansPage({
   onDeletePlan,
 }) {
   const [form, setForm] = useState(initialForm);
+
+  const availableCurrencies = useMemo(() => {
+    const source = Array.isArray(currencyOptions) && currencyOptions.length
+      ? currencyOptions
+      : fallbackCurrencies;
+
+    return [...new Set(
+      source
+        .map((currency) => String(currency || "").trim().toUpperCase())
+        .filter(Boolean)
+    )];
+  }, [currencyOptions]);
 
   const sortedPlans = useMemo(() => {
     return [...plans].sort((a, b) => {
@@ -41,10 +94,15 @@ export default function AdminPlansPage({
 
   const submit = async (event) => {
     event.preventDefault();
+    const currency = String(form.currency || "INR").trim().toUpperCase();
+    const amount = Number(form.amount);
+
     await onCreatePlan({
       name: form.name,
       description: form.description,
-      priceInr: Number(form.priceInr),
+      currency,
+      amount,
+      priceInr: currency === "INR" ? Math.floor(amount) : undefined,
       billingCycle: form.billingCycle,
       isActive: !!form.isActive,
       sortOrder: Number(form.sortOrder),
@@ -116,13 +174,27 @@ export default function AdminPlansPage({
               </div>
 
               <div className="field">
-                <label htmlFor="plan-price">Price (INR)</label>
+                <label htmlFor="plan-currency">Currency</label>
+                <select
+                  id="plan-currency"
+                  value={form.currency}
+                  onChange={(e) => setForm((prev) => ({ ...prev, currency: e.target.value }))}
+                >
+                  {availableCurrencies.map((currency) => (
+                    <option key={currency} value={currency}>{currency}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="field">
+                <label htmlFor="plan-price">Price</label>
                 <input
                   id="plan-price"
                   type="number"
+                  step="0.01"
                   min="1"
-                  value={form.priceInr}
-                  onChange={(e) => setForm((prev) => ({ ...prev, priceInr: e.target.value }))}
+                  value={form.amount}
+                  onChange={(e) => setForm((prev) => ({ ...prev, amount: e.target.value }))}
                   required
                 />
               </div>
@@ -200,7 +272,7 @@ export default function AdminPlansPage({
                         <strong>{plan.name}</strong>
                         <div className="admin-plan-subtext">{plan.description || "-"}</div>
                       </td>
-                      <td>INR {plan.priceInr}</td>
+                      <td>{formatPlanPrice(plan)}</td>
                       <td>{formatBillingCycle(plan.billingCycle)}</td>
                       <td>{plan.isActive ? "Active" : "Inactive"}</td>
                       <td>{plan.sortOrder}</td>
