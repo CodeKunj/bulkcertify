@@ -32,6 +32,28 @@ function setSessionCookie(name, value) {
   document.cookie = `${name}=${encodeURIComponent(value)}; path=/; SameSite=Lax`;
 }
 
+function setPersistentCookie(name, value, daysToExpire = 365) {
+  if (typeof document === "undefined") return;
+
+  const maxAgeSeconds = daysToExpire * 24 * 60 * 60;
+  const date = new Date();
+  date.setTime(date.getTime() + daysToExpire * 24 * 60 * 60 * 1000);
+  const expires = date.toUTCString();
+  document.cookie = `${name}=${encodeURIComponent(value)}; max-age=${maxAgeSeconds}; expires=${expires}; path=/; SameSite=Lax`;
+}
+
+function getInitialTheme() {
+  if (typeof document === "undefined") return "light";
+  
+  const savedTheme = getCookieValue(THEME_COOKIE_NAME);
+  if (savedTheme === "light" || savedTheme === "dark") {
+    return savedTheme;
+  }
+
+  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  return prefersDark ? "dark" : "light";
+}
+
 function replaceInXml(xml, placeholder, value) {
   const safe = value
     .replace(/&/g, "&amp;")
@@ -174,7 +196,7 @@ function loadRazorpayCheckout() {
 
 export default function App() {
   const apiBase = import.meta.env.VITE_API_URL || "";
-  const [themeMode, setThemeMode] = useState("light");
+  const [themeMode, setThemeMode] = useState(getInitialTheme());
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -228,20 +250,10 @@ export default function App() {
   );
 
   useEffect(() => {
-    const savedTheme = getCookieValue(THEME_COOKIE_NAME) || window.localStorage.getItem(THEME_COOKIE_NAME);
-    if (savedTheme === "light" || savedTheme === "dark") {
-      setThemeMode(savedTheme);
-      return;
-    }
-
-    const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-    setThemeMode(prefersDark ? "dark" : "light");
-  }, []);
-
-  useEffect(() => {
+    // Apply theme to document on mount and whenever it changes
     document.documentElement.setAttribute("data-theme", themeMode);
-    setSessionCookie(THEME_COOKIE_NAME, themeMode);
-    window.localStorage.removeItem(THEME_COOKIE_NAME);
+    // Save theme to persistent cookie
+    setPersistentCookie(THEME_COOKIE_NAME, themeMode, 365);
   }, [themeMode]);
 
   useEffect(() => {
