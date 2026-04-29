@@ -1288,7 +1288,7 @@ export default function App() {
       {content}
       <button
         type="button"
-        className={`theme-toggle ${isDarkMode ? "is-dark" : "is-light"}`}
+        className={`theme-toggle-card theme-toggle-fab ${isDarkMode ? "is-dark" : "is-light"}`}
         onClick={() => setThemeMode((prev) => (prev === "dark" ? "light" : "dark"))}
         aria-label={`Switch to ${isDarkMode ? "light" : "dark"} mode`}
         title={`Switch to ${isDarkMode ? "light" : "dark"} mode`}
@@ -1456,9 +1456,11 @@ export default function App() {
                   <h3>{accountLoading ? "Loading account..." : "Billing Dashboard"}</h3>
                   <p>{account?.email || authEmail || "Signed in"}</p>
                 </div>
-                <button type="button" className="account-btn" onClick={signOut}>
-                  Sign Out
-                </button>
+                <div className="account-top-actions">
+                  <button type="button" className="account-btn" onClick={signOut}>
+                    Sign Out
+                  </button>
+                </div>
               </div>
 
               <div className="account-stats">
