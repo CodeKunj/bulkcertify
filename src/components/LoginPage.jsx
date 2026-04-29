@@ -1,3 +1,5 @@
+import { GoogleLogin } from "@react-oauth/google";
+
 export default function LoginPage({
   authMode,
   setAuthMode,
@@ -12,6 +14,8 @@ export default function LoginPage({
   guestLoading,
   guestUsesLeft,
   onOpenPolicy,
+  onGoogleSignIn,
+  googleBusy,
 }) {
   return (
     <div className="app gate-app">
@@ -89,7 +93,7 @@ export default function LoginPage({
                 placeholder="Enter your password"
               />
             </div>
-            <button type="submit" className="account-btn gate-submit" disabled={authBusy}>
+            <button type="submit" className="account-btn gate-submit" disabled={authBusy || googleBusy}>
               {authBusy
                 ? authMode === "login"
                   ? "Logging in..."
@@ -99,6 +103,22 @@ export default function LoginPage({
                   : "Create account"}
             </button>
           </form>
+
+          <div style={{ margin: "16px 0", textAlign: "center", fontSize: "14px", color: "var(--text-secondary)" }}>
+            OR
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <GoogleLogin
+              onSuccess={onGoogleSignIn}
+              onError={() => {
+                // Error is handled by the callback
+              }}
+              disabled={googleBusy}
+              text="signin"
+              size="large"
+            />
+          </div>
 
           {authError && <div className="error-card">{authError}</div>}
 

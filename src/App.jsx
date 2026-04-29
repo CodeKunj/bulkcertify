@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { GoogleOAuthProvider } from "@react-oauth/google";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import { renderAsync } from "docx-preview";
@@ -185,6 +186,8 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
+  const [googleClientId, setGoogleClientId] = useState("");
 
   const [docxFile, setDocxFile] = useState(null);
   const [rows, setRows] = useState([]);
@@ -302,6 +305,22 @@ export default function App() {
     screen,
     skipUpgradeRedirectOnce,
   ]);
+
+  useEffect(() => {
+    const loadGoogleClientId = async () => {
+      try {
+        const res = await fetch(getApiUrl("/api/auth/google/init"));
+        const body = await res.json();
+        if (res.ok && body.clientId) {
+          setGoogleClientId(body.clientId);
+        }
+      } catch (err) {
+        // Google OAuth not configured or error loading
+        console.debug("Google OAuth not available:", err.message);
+      }
+    };
+    loadGoogleClientId();
+  }, []);
 
   const authHeaders = useCallback(() => {
     if (!isAuthenticated || !authEmail) return {};
@@ -475,6 +494,38 @@ export default function App() {
       setAuthError(err.message || "Authentication failed.");
     } finally {
       setAuthBusy(false);
+    }
+  };
+
+  const handleGoogleSignIn = async (credentialResponse) => {
+    setAuthError("");
+    setGoogleBusy(true);
+    try {
+      const res = await publicFetch("/api/auth/google/verify", {
+        method: "POST",
+        body: JSON.stringify({ token: credentialResponse.credential }),
+      });
+      const body = await res.json();
+
+      if (!res.ok) {
+        throw new Error(body.error || "Google authentication failed.");
+      }
+
+      // Store the email from Google OAuth for future requests
+      const email = body.account?.email;
+      if (email) {
+        window.localStorage.setItem("bulkcertify_local_auth", JSON.stringify({ email }));
+        setAuthEmail(email);
+      }
+
+      setIsAuthenticated(true);
+      setScreen("generator");
+      setAccount(body.account || null);
+      setError("");
+    } catch (err) {
+      setAuthError(err.message || "Google authentication failed.");
+    } finally {
+      setGoogleBusy(false);
     }
   };
 
@@ -1254,7 +1305,7 @@ export default function App() {
   );
 
   if (screen === "auth") {
-    return renderWithThemeToggle(
+    const loginPageComponent = (
       <LoginPage
         authMode={authMode}
         setAuthMode={setAuthMode}
@@ -1269,8 +1320,20 @@ export default function App() {
         guestLoading={guestLoading}
         guestUsesLeft={guestUsesLeft}
         onOpenPolicy={() => openPolicyPage("auth")}
+        onGoogleSignIn={handleGoogleSignIn}
+        googleBusy={googleBusy}
       />
     );
+
+    if (googleClientId) {
+      return renderWithThemeToggle(
+        <GoogleOAuthProvider clientId={googleClientId}>
+          {loginPageComponent}
+        </GoogleOAuthProvider>
+      );
+    }
+
+    return renderWithThemeToggle(loginPageComponent);
   }
 
   if (screen === "upgrade") {

@@ -5,6 +5,7 @@ import express from "express";
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "crypto";
 import Razorpay from "razorpay";
 import { PrismaClient } from "@prisma/client";
+import { OAuth2Client } from "google-auth-library";
 
 const app = express();
 const prisma = new PrismaClient();
@@ -16,6 +17,8 @@ const razorpayKeyId = process.env.RAZORPAY_KEY_ID;
 const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET;
 const razorpayWebhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
 const razorpayPlanId = process.env.RAZORPAY_PLAN_ID;
+const googleClientId = process.env.GOOGLE_CLIENT_ID;
+const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
 const guestCookieName = "bulkcertify_guest_id";
 const guestTrialLimit = 1;
 const accountMonthlyTrialLimit = 2;
@@ -53,6 +56,13 @@ const razorpay = razorpayKeyId && razorpayKeySecret
   ? new Razorpay({
       key_id: razorpayKeyId,
       key_secret: razorpayKeySecret,
+    })
+  : null;
+
+const googleOAuthClient = googleClientId && googleClientSecret
+  ? new OAuth2Client({
+      clientId: googleClientId,
+      clientSecret: googleClientSecret,
     })
   : null;
 
@@ -1193,6 +1203,101 @@ app.post("/api/auth/login", async (req, res) => {
     return res.json({ account: await toAccountPayloadWithMonthlyUsage(user) });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Could not log in." });
+  }
+});
+
+// Google OAuth endpoints
+app.get("/api/auth/google/init", (_req, res) => {
+  try {
+    if (!googleClientId) {
+      return res.status(400).json({ error: "Google OAuth is not configured." });
+    }
+    return res.json({ clientId: googleClientId });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Could not initialize Google auth." });
+  }
+});
+
+app.post("/api/auth/google/verify", async (req, res) => {
+  try {
+    if (!googleOAuthClient) {
+      return res.status(400).json({ error: "Google OAuth is not configured." });
+    }
+
+    const token = String(req.body?.token || "").trim();
+    if (!token) {
+      return res.status(400).json({ error: "Token is required." });
+    }
+
+    // Verify the token
+    const ticket = await googleOAuthClient.verifyIdToken({
+      idToken: token,
+      audience: googleClientId,
+    });
+
+    const payload = ticket.getPayload();
+    if (!payload) {
+      return res.status(401).json({ error: "Invalid token." });
+    }
+
+    const email = String(payload.email || "").trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ error: "Email not found in token." });
+    }
+
+    const googleId = String(payload.sub || "");
+    const name = String(payload.name || "");
+
+    // Find or create user
+    let user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      // Create new user with OAuth login
+      user = await prisma.user.create({
+        data: {
+          id: generateDbId(),
+          email,
+          passwordHash: "oauth-google",
+          isAdmin: email === adminEmail,
+          trialUsageCount: accountMonthlyTrialLimit,
+          isSubscribed: false,
+        },
+      });
+
+      await logActivity(req, {
+        action: "AUTH_OAUTH_SIGNUP",
+        email: user.email,
+        targetType: "USER",
+        targetId: user.id,
+        details: { provider: "GOOGLE", googleId, name },
+      });
+    } else if (user.passwordHash === "legacy-missing-password" || !user.passwordHash) {
+      // Upgrade legacy user to OAuth
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash: "oauth-google" },
+      });
+
+      await logActivity(req, {
+        action: "AUTH_OAUTH_UPGRADED",
+        email: user.email,
+        targetType: "USER",
+        targetId: user.id,
+        details: { provider: "GOOGLE", googleId, name },
+      });
+    } else {
+      await logActivity(req, {
+        action: "AUTH_OAUTH_LOGIN",
+        email: user.email,
+        targetType: "USER",
+        targetId: user.id,
+        details: { provider: "GOOGLE", googleId },
+      });
+    }
+
+    return res.json({ account: await toAccountPayloadWithMonthlyUsage(user) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Google authentication failed." });
   }
 });
 
