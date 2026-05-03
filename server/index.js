@@ -5,10 +5,13 @@ import express from "express";
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "crypto";
 import Razorpay from "razorpay";
 import { PrismaClient } from "@prisma/client";
+import { withAccelerate } from "@prisma/extension-accelerate";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { OAuth2Client } from "google-auth-library";
 
 const app = express();
-const prisma = new PrismaClient();
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+const prisma = new PrismaClient({ adapter }).$extends(withAccelerate());
 
 const port = Number(process.env.PORT || 8787);
 const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
